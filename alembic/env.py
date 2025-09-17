@@ -13,7 +13,7 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 # Import your models and database configuration
 from app.core.config import settings
 from app.db.session import Base
-from app.models import user, media, transcript  # Import all models
+from app.models import user, media, transcript, workspace, asset  # Import all models
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

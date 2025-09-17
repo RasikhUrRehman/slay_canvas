@@ -2,7 +2,7 @@ from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.db.session import Base
-
+from app.models.workspace import workspace_users
 
 class User(Base):
     __tablename__ = 'users'
@@ -34,6 +34,13 @@ class User(Base):
 
     # Relationships
     boards = relationship("Board", back_populates="user", cascade="all, delete-orphan")
+    workspaces = relationship("Workspace", back_populates="user", cascade="all, delete-orphan")
+    collaborating_workspaces = relationship(
+        "Workspace",
+        secondary=workspace_users,
+        back_populates="users"
+    )
+    assets = relationship("Asset", back_populates="user", cascade="all, delete-orphan")
     # projects = relationship("Project", back_populates="user")
     # media_files = relationship("MediaFile", back_populates="user")
 

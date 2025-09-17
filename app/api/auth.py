@@ -315,7 +315,6 @@ if DATABASE_AVAILABLE:
         user_service = Depends(get_user_service)
     ):
         """Send OTP to user's email for password reset"""
-        
         try:
             # Check if user exists
             user = await user_service.get_user_by_email(db, request_data.email)
@@ -325,6 +324,7 @@ if DATABASE_AVAILABLE:
             
             # Generate and send OTP
             otp = otp_manager.generate_otp(request_data.email)
+            print(otp)
             email_sent = await email_service.send_otp_email(request_data.email, otp)
             
             if not email_sent:

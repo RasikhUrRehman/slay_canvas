@@ -35,7 +35,7 @@ class MediaFile(Base):
     
     # Relationships
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
-    project_id = Column(Integer, ForeignKey('projects.id'), nullable=True)
+    # project_id = Column(Integer, ForeignKey('projects.id'), nullable=True)
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -67,6 +67,7 @@ class Project(Base):
     
     # Relationships
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=True)
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -75,6 +76,7 @@ class Project(Base):
     # Relationships
     user = relationship("User", back_populates="projects")
     media_files = relationship("MediaFile", back_populates="project")
+    workspace = relationship("Workspace", back_populates="media_files")
 
     def __repr__(self):
         return f"<Project(id={self.id}, name='{self.name}')>"
