@@ -31,7 +31,7 @@ from datetime import datetime
 from engine.processors.audio_processor import AudioTranscriber
 from engine.processors.image_processor import ImageProcessor
 from engine.processors.document_processor import DocumentProcessor
-from engine.settings import ServiceSettings
+from app.core.config import settings
 from engine.services.youtube import YouTubeProcessor
 from engine.services.instagram import get_instagram_media_urls
 
@@ -87,7 +87,7 @@ class Extractor:
         
         # Initialize processors
         self.audio_processor = AudioTranscriber()
-        self.image_processor = ImageProcessor(ServiceSettings.IMAGE_PROCESSOR_API_KEY)
+        self.image_processor = ImageProcessor(settings.API_NINJAS_KEY)
         self.document_processor = DocumentProcessor()
         self.youtube_processor = YouTubeProcessor()
         
@@ -437,6 +437,7 @@ class Extractor:
     def _extract_instagram(self, url: str) -> ExtractedContent:
         """Extract content from Instagram posts using Instagram processor"""
         try:
+            print("using instagram")
             # Use the Instagram processor to get media URLs
             media_urls = get_instagram_media_urls(url)
             
@@ -444,7 +445,7 @@ class Extractor:
                 raise ValueError("Failed to extract Instagram media URLs")
             
             # Extract shortcode for additional metadata
-            shortcode_match = re.search(r'/p/([A-Za-z0-9_-]+)', url)
+            shortcode_match = re.search(r'/(p|reel|tv)/([A-Za-z0-9_-]+)', url)
             if not shortcode_match:
                 raise ValueError("Invalid Instagram URL")
             
@@ -704,18 +705,21 @@ class Extractor:
                     '[data-testid="card.wrapper"] img[alt*="Image"]',  # Card images
                     'article img[alt*="Image"]',  # Images within the tweet article
                     '.media-image img'  # Media container images
-                ]
+                ] # TODO: Implement extractor for multiple image extraction on a single tweet
                 
                 for selector in img_selectors:
                     try:
                         img_elements = driver.find_elements(By.CSS_SELECTOR, selector)
                         for img in img_elements:
                             src = img.get_attribute('src')
-                            if src and self._is_valid_tweet_image(src):
-                                # Always prioritize small quality for lower file size
-                                base_url = src.split('?')[0]  # Remove query parameters
-                                image_url = f"{base_url}?name=small"
-                                break
+                            print("Valid image URL:",src)
+                            image_url = src
+                            # if src and self._is_valid_tweet_image(src):
+                                
+                            #     # Always prioritize small quality for lower file size
+                            #     base_url = src.split('?')[0]  # Remove query parameters
+                            #     image_url = f"{base_url}?name=small"
+                            #     break
                         if image_url:
                             break
                     except:
@@ -859,6 +863,8 @@ class Extractor:
             except:
                 pass
             
+            print("Image URL:",image_url)
+            print("Video URL:",video_url)
             # Process media for transcriptions
             image_transcriptions = []
             if images:
@@ -1032,12 +1038,20 @@ def main():
 
     # Example URLs and content to test
     test_items = [
-        #"https://www.geeksforgeeks.org",
+        #"https://www.geeksforgeeks.org", 
+        #"https://en.wikipedia.org/wiki/Pakistan",
         #"https://www.youtube.com/watch?v=fqvRz5u4QJE&list=RDfqvRz5u4QJE&start_radio=1",
         #"https://x.com/realDonaldTrump/status/1967654825308590378",
+        #"https://x.com/elonmusk/status/1968589844491215324",
         #"https://x.com/elonmusk/status/1967938574835388553",
-        "https://x.com/ValentinaForUSA/status/1967664132444045739"
-
+        #"https://x.com/ValentinaForUSA/status/1967664132444045739",
+        #"https://www.instagram.com/p/DOOQ0p6DBPI/?utm_source=ig_web_copy_link&igsh=MTkyb3VtbjVpbWprNg==", #image
+        #"https://www.instagram.com/reel/DOvPrnYjZPZ/?utm_source=ig_web_copy_link&igsh=MXdodmVjMG56MXVybA==", #video
+        #"https://www.instagram.com/reel/DHECrYAzKoa/?utm_source=ig_web_copy_link&igsh=dTFzMzdyb3R0YTVv",
+        #"https://www.instagram.com/reel/DOY2a8BkoYx/?utm_source=ig_web_copy_link&igsh=cG1zZ3JsMzc5bzA5",
+        #"uploads/video_WordPress Blog & n8n Automation for Beginners Step-by-Step Guide.mp4",
+        #"uploads/pic2.png"
+        "uploads/audio_Lewis Capaldi - Someone You Loved (Lyrics).m4a"
     ]
     
     print("🚀 Testing Universal Content Extractor with Router")
@@ -1072,6 +1086,10 @@ def main():
                     print(f"  - {img_trans['url']}: {img_trans['text'][:100]}...")
             
             print(f"⏰ Extraction Time: {result['extraction_time']}")
+
+            # assume your extractor gave you a dictionary called `result`
+            print("complete:",result["transcriptions"]["text"])
+            
             
         else:
             print(f"❌ Failed: {result['error_message']}")

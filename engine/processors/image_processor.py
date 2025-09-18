@@ -1,6 +1,9 @@
 from urllib.parse import urlparse
 import requests
+import json
 import os
+from typing import Dict, Any, Optional
+from app.core.config import settings
 import io
 from PIL import Image
 from dotenv import load_dotenv
@@ -125,7 +128,7 @@ class ImageProcessor:
             return None
 
 if __name__ == "__main__":
-    YOUR_API_KEY = os.getenv("API_NINJAS_KEY")
+    YOUR_API_KEY = settings.API_NINJAS_KEY
     #IMAGE_FILE = "https://instagram.fmfg1-1.fna.fbcdn.net/v/t51.2885-15/549468712_18484415512076000_6849235617603501235_n.jpg?stp=dst-jpg_e35_p1080x1080_sh0.08_tt6&_nc_ht=instagram.fmfg1-1.fna.fbcdn.net&_nc_cat=1&_nc_oc=Q6cZ2QEUdk8VEj5bBIO1lbtB_FtfNhQsiBCQUVH-yYeFXfZpKhZfoG2RISrqm6mSYFLeVfc&_nc_ohc=hbYB3UVdyakQ7kNvwH4p4Cm&_nc_gid=YK3mgRuowGdPvNk-Jlbukw&edm=AE-LrgUBAAAA&ccb=7-5&oh=00_AfZ0pKelOZdYK81083KUEO5DM0I_ZbfRvO-kE6CwHqyxYQ&oe=68CF844B&_nc_sid=8353fa"
     IMAGE_FILE = "downloads\pic2.png"
     image_processor = ImageProcessor(YOUR_API_KEY)

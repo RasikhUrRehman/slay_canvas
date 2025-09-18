@@ -147,6 +147,111 @@ async def upload_media(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/upload-audio", response_model=MediaRead)
+async def upload_audio(
+    file: UploadFile = File(...),
+    title: str = Form(...),
+    description: Optional[str] = Form(None),
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Upload an audio file to the system.
+    Supports all audio formats including MP3, WAV, FLAC, AAC, OGG, M4A, MP4, WMA, AIFF, and more.
+    """
+    try:
+        # Define supported audio MIME types and file extensions
+        supported_audio_types = {
+            # Common audio formats
+            'audio/mpeg',           # MP3
+            'audio/wav',            # WAV
+            #'audio/wave',           # WAV (alternative)
+            #'audio/x-wav',          # WAV (alternative)
+            # 'audio/flac',           # FLAC
+            # 'audio/x-flac',         # FLAC (alternative)
+            # 'audio/aac',            # AAC
+            'audio/mp4',            # MP4 audio
+            # 'audio/x-m4a',          # M4A
+            # 'audio/m4a',            # M4A (alternative)
+            # 'audio/ogg',            # OGG
+            # 'audio/vorbis',         # OGG Vorbis
+            # 'audio/x-ms-wma',       # WMA
+            # 'audio/aiff',           # AIFF
+            # 'audio/x-aiff',         # AIFF (alternative)
+            # 'audio/amr',            # AMR
+            # 'audio/3gpp',           # 3GP audio
+            'audio/webm',           # WebM audio
+            #'audio/opus',           # Opus
+            
+            # Video formats that contain audio (MP4, etc.)
+            'video/mp4',            # MP4 video (contains audio)
+            # 'video/quicktime',      # MOV (contains audio)
+            # 'video/x-msvideo',      # AVI (contains audio)
+            'video/webm',           # WebM video (contains audio)
+        }
+        
+        supported_extensions = {
+            '.mp3', '.wav', '.mp4', '.mov', 
+            '.avi', '.webm', '.m4v', '.mkv'
+        }
+        
+        # Get file extension
+        file_extension = os.path.splitext(file.filename.lower())[1] if file.filename else ''
+        
+        # Validate audio file type
+        is_valid_mime = file.content_type in supported_audio_types
+        is_valid_extension = file_extension in supported_extensions
+        
+        if not (is_valid_mime or is_valid_extension):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Unsupported audio format. Supported formats include: MP3, WAV, FLAC, AAC, M4A, OGG, MP4, WMA, AIFF, and more. "
+                       f"Received: {file.content_type} with extension {file_extension}"
+            )
+        
+        # Validate file size (limit to 500MB for audio files)
+        max_size = 500 * 1024 * 1024  # 500MB in bytes
+        if file.size and file.size > max_size:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Audio file too large. Maximum size is 500MB. Received: {file.size / (1024*1024):.1f}MB"
+            )
+        
+        # Create uploads directory if it doesn't exist
+        upload_dir = "uploads"
+        os.makedirs(upload_dir, exist_ok=True)
+        
+        # Generate unique filename to avoid conflicts
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_filename = f"audio_{timestamp}_{file.filename}"
+        file_path = os.path.join(upload_dir, safe_filename)
+        
+        # Save the uploaded file
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # Create media record
+        media_data = MediaCreate(
+            title=title,
+            description=description,
+            file_path=file_path,
+            file_type=file.content_type,
+            file_size=file.size
+        )
+        
+        media = await create_media(db, media_data, user_id)
+        
+        logger.info(f"Audio file uploaded successfully: {safe_filename} by user {user_id}")
+        return media
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        logger.error(f"Audio upload error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to upload audio file: {str(e)}")
+
+
 # RAG document management endpoints
 @router.post("/upload-document", response_model=DocumentResponse)
 async def upload_document(

@@ -13,8 +13,9 @@ import json
 # Import custom modules
 from engine.services.extractor import Extractor
 from engine.document_splitter import DocumentSplitter, ChunkedDocument
-from engine.vector_store_new import VectorStore
+from engine.vector_store import VectorStore
 from engine.services.openrouter import OpenRouterClient
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -84,8 +85,8 @@ class RAGSystem:
             logger.info("✓ Vector store initialized")
             
             # Initialize OpenRouter client for generation
-            openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
-            openrouter_model = os.getenv("OPENROUTER_MODEL")
+            openrouter_api_key = settings.OPENROUTER_API_KEY
+        openrouter_model = settings.OPENROUTER_MODEL
 
             if openrouter_api_key:
                 self.llm_client = OpenRouterClient(model=openrouter_model, api_key=openrouter_api_key)

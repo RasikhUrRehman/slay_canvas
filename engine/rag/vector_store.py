@@ -14,8 +14,8 @@ from pymilvus import (
 from dotenv import load_dotenv
 
 # Import the custom embedding service
-from engine.services.embedding import NLPCloudClient
-from engine.settings import MilvusSettings
+from engine.services.embedding import EmbeddingService
+from app.core.config import settings
 
 # Load environment variables from .env.local
 load_dotenv(".env.local")
@@ -39,20 +39,12 @@ class VectorStore:
         self.collection_name = collection_name
         self.dimension = dimension
 
-        # Initialize NLP Cloud client for embeddings
-        nlp_token = os.getenv("NLPCLOUD_TOKEN")
-        if not nlp_token:
-            raise ValueError("NLPCLOUD_TOKEN environment variable is required")
-        
-        self.embedding_client = NLPCloudClient(
-            model_name="paraphrase-multilingual-mpnet-base-v2",
-            token=nlp_token
-        )
+        # Initialize embedding service
+        self.embedding_service = EmbeddingService()
 
         # Connect to Milvus server using settings
-        connection_args = MilvusSettings.get_connection_args()
-        milvus_host = connection_args["host"]
-        milvus_port = connection_args["port"]
+        milvus_host = settings.MILVUS_HOST
+        milvus_port = settings.MILVUS_PORT
         
         self.milvus_uri = f"http://{milvus_host}:{milvus_port}"
         logger.info(f"Connecting to Milvus server at {self.milvus_uri}")
@@ -67,7 +59,7 @@ class VectorStore:
             self._ensure_collection_loaded()
         
         logger.info(f"Connected to Milvus with collection: {collection_name}")
-        logger.info(f"Using NLP Cloud embedding model: paraphrase-multilingual-mpnet-base-v2")
+        logger.info(f"Using Hugging Face embedding model: {self.embedding_service.model}")
 
     def _create_collection(self):
         """Create the Milvus collection with appropriate schema."""
@@ -119,7 +111,7 @@ class VectorStore:
 
     def _get_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
-        Get embeddings for a list of texts using NLP Cloud API.
+        Get embeddings for a list of texts using the embedding service.
         
         Args:
             texts: List of texts to embed
@@ -128,12 +120,15 @@ class VectorStore:
             List of embedding vectors
         """
         try:
-            result = self.embedding_client.get_embeddings(texts)
-            if result and 'embeddings' in result:
-                return result['embeddings']
-            else:
-                logger.error(f"No embeddings returned from NLP Cloud API: {result}")
-                raise ValueError("Failed to get embeddings from NLP Cloud API")
+            embeddings = []
+            for text in texts:
+                result = self.embedding_service.get_embedding(text)
+                if result and 'embeddings' in result:
+                    embeddings.append(result['embeddings'])
+                else:
+                    logger.error(f"No embeddings returned from embedding service: {result}")
+                    raise ValueError("Failed to get embeddings from embedding service")
+            return embeddings
         except Exception as e:
             logger.error(f"Error generating embeddings: {e}")
             raise
@@ -152,7 +147,7 @@ class VectorStore:
         if not texts:
             return []
 
-        # Generate embeddings using NLP Cloud
+        # Generate embeddings using the embedding service
         logger.info(f"Generating embeddings for {len(texts)} texts")
         embeddings = self._get_embeddings(texts)
         logger.info(f"Generated {len(embeddings)} embeddings")
@@ -233,7 +228,7 @@ class VectorStore:
         # Ensure collection is loaded
         self._ensure_collection_loaded()
         
-        # Generate query embedding using NLP Cloud
+        # Generate query embedding using the embedding service
         query_embedding = self._get_embeddings([query])[0]
 
         # Build filter expression if needed

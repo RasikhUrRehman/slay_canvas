@@ -1,7 +1,7 @@
 import instaloader
 from urllib.parse import urlparse
 from engine.processors.image_processor import ImageProcessor
-from engine.settings import ServiceSettings
+from app.core.config import settings
 
 
 def get_instagram_media_urls(post_url):
@@ -53,11 +53,11 @@ def get_instagram_media_urls(post_url):
         return None
 
 if __name__ == "__main__":
-    url = "https://www.instagram.com/p/DOqbj1sjEjk/?utm_source=ig_web_copy_link&igsh=MTAwaGt4Y3U0eDdreA=="  
+    url = "https://www.instagram.com/reel/DOY2a8BkoYx/?utm_source=ig_web_copy_link&igsh=cG1zZ3JsMzc5bzA5" #"https://www.instagram.com/p/DOqbj1sjEjk/?utm_source=ig_web_copy_link&igsh=MTAwaGt4Y3U0eDdreA=="  
     media = get_instagram_media_urls(url)
-
+    print(media)
     if media:
         print(media['images'][0])
-        image_processor = ImageProcessor(ServiceSettings.IMAGE_PROCESSOR_API_KEY)
+        image_processor = ImageProcessor(settings.API_NINJAS_KEY)
         text = image_processor.process(media['images'][0])
         print(text)

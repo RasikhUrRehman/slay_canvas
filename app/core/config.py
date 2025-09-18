@@ -13,6 +13,9 @@ except Exception:
 class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://username:password@localhost:5432/mediaboard_ai"
+    POSTGRES_DB: str = "slay_canvas"
+    POSTGRES_USER: str = "postgres"
+    POSTGRES_PASSWORD: str = "postgres"
     
     # Security
     SECRET_KEY: str = "your-super-secret-key-here-generate-a-random-one"
@@ -30,6 +33,13 @@ class Settings(BaseSettings):
     # AI Services
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
+    HF_TOKEN: str = ""
+    DEEPGRAM_API_KEY: str = ""
+    OPENROUTER_API_KEY: str = ""
+    OPENROUTER_MODEL: str = ""
+    NLPCLOUD_TOKEN: str = ""
+    NLPCLOUD_MODEL: str = ""
+    API_NINJAS_KEY: str = ""
     
     # File Storage
     UPLOAD_DIR: str = "./uploads"
@@ -43,6 +53,11 @@ class Settings(BaseSettings):
     
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
+    
+    # Milvus Configuration
+    MILVUS_HOST: str = "localhost"
+    MILVUS_PORT: int = 19531
+    MILVUS_COLLECTION: str = "rag_documents"
     
     # Environment
     ENVIRONMENT: str = "development"

@@ -3,14 +3,16 @@ import os
 import io
 from dotenv import load_dotenv
 from urllib.parse import urlparse
-from engine.settings import ServiceSettings
+from app.core.config import settings
 
 load_dotenv()
 
 class AudioTranscriber:
     def __init__(self):
         self.base_url = "https://api.deepgram.com/v1/listen"
-        self.api_key = ServiceSettings.DEEPGRAM_API_KEY
+        self.api_key = settings.DEEPGRAM_API_KEY
+        if not self.api_key:
+            raise ValueError("DEEPGRAM_API_KEY not found in environment variables")
 
     def transcribe_from_file(self, file_path: str):
         url = self.base_url
@@ -100,7 +102,7 @@ class AudioTranscriber:
         
 if __name__ == "__main__":
     # Example
-    file_path = "downloads/video_WordPress Blog & n8n Automation for Beginners Step-by-Step Guide.mp4"
+    file_path = "uploads/video_WordPress Blog & n8n Automation for Beginners Step-by-Step Guide.mp4"
     
     with open(file_path, "rb") as f:
         buffer = io.BytesIO(f.read())

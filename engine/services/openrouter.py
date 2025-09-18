@@ -6,6 +6,8 @@ from typing import List, Dict, Optional, Union, Generator, Iterator
 from openai import OpenAI
 from openai import OpenAIError
 from dotenv import load_dotenv
+from app.core.config import settings
+
 load_dotenv()
 
 
@@ -15,7 +17,7 @@ class OpenRouterClient:
         :param api_key: Your OpenRouter API key (or from env var OPENROUTER_API_KEY).
         :param system_prompt: Default system prompt for all chats.
         """
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
+        self.api_key = api_key or settings.OPENROUTER_API_KEY
         if not self.api_key:
             raise ValueError("OpenRouter API key is required. "
                              "Set OPENROUTER_API_KEY env var or pass api_key directly.")
