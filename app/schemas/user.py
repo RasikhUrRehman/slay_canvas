@@ -1,6 +1,7 @@
-from pydantic import BaseModel, EmailStr
-from typing import Optional, Dict, Any, List
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, EmailStr
 
 
 class UserBase(BaseModel):
@@ -116,7 +117,6 @@ class PasswordResetRequest(BaseModel):
 
 
 class PasswordResetVerify(BaseModel):
-    email: EmailStr
     otp: str
     new_password: str
     confirm_password: str

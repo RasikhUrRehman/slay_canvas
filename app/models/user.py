@@ -1,8 +1,10 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON
-from sqlalchemy.sql import func
+from sqlalchemy import JSON, Boolean, Column, DateTime, Integer, String
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+
 from app.db.session import Base
 from app.models.workspace import workspace_users
+
 
 class User(Base):
     __tablename__ = 'users'
