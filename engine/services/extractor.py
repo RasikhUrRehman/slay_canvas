@@ -1051,7 +1051,8 @@ def main():
         #"https://www.instagram.com/reel/DOY2a8BkoYx/?utm_source=ig_web_copy_link&igsh=cG1zZ3JsMzc5bzA5",
         #"uploads/video_WordPress Blog & n8n Automation for Beginners Step-by-Step Guide.mp4",
         #"uploads/pic2.png"
-        "uploads/audio_Lewis Capaldi - Someone You Loved (Lyrics).m4a"
+        #"uploads/audio_Lewis Capaldi - Someone You Loved (Lyrics).m4a",
+        "hello hi there",    
     ]
     
     print("🚀 Testing Universal Content Extractor with Router")

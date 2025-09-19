@@ -80,7 +80,7 @@ class RAGSystem:
             # Initialize vector store
             self.vector_store = VectorStore(
                 collection_name=collection_name,
-                dimension=4096  # Qwen embedding dimension
+                dimension=1536  # Qwen embedding dimension
             )
             logger.info("✓ Vector store initialized")
             
@@ -517,6 +517,7 @@ Answer:"""
             }
             
             for status in self.processing_status.values():
+                print("STATUS :", status.status)
                 status_summary[status.status] = status_summary.get(status.status, 0) + 1
             
             return {

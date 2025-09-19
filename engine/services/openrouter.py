@@ -22,7 +22,7 @@ class OpenRouterClient:
             raise ValueError("OpenRouter API key is required. "
                              "Set OPENROUTER_API_KEY env var or pass api_key directly.")
         
-        self.model = model
+        self.model = model or settings.OPENROUTER_MODEL
         self.client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=self.api_key,

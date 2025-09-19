@@ -55,62 +55,122 @@
 #         print("Parsed JSON:", result)
 #     print(len(result['embeddings'][0]))
 
+# import os
+# from huggingface_hub import InferenceClient
+# from typing import List, Dict, Any
+# from dotenv import load_dotenv
+# from app.core.config import settings
+# load_dotenv()
+
+# class EmbeddingService:
+#     """
+#     Wrapper around Hugging Face InferenceClient for generating embeddings.
+#     """
+
+#     def __init__(
+#         self,
+#         api_key: str | None = None,
+#         provider: str = "nebius",
+#         model: str = "Qwen/Qwen3-Embedding-8B",
+#     ):
+#         """
+#         Initialize the embedding service.
+
+#         Args:
+#             api_key (str | None): Hugging Face API token. Defaults to environment variable HF_TOKEN.
+#             provider (str): Inference provider (default: 'nebius').
+#             model (str): Model ID to use for embeddings.
+#         """
+#         self.api_key = api_key or settings.HF_TOKEN
+#         if not self.api_key:
+#             raise ValueError("API key not provided. Set HF_TOKEN environment variable or pass it explicitly.")
+
+#         self.model = model
+#         self.client = InferenceClient(provider=provider, api_key=self.api_key)
+
+#     def get_embedding(self, text: str) -> dict:
+#             """
+#             Generate an embedding vector for a given text.
+
+#             Args:
+#                 text (str): Input text.
+
+#             Returns:
+#                 dict: {"embeddings": [float, ...]}
+#             """
+#             result = self.client.feature_extraction(text, model=self.model)
+#             result = result[0]
+
+#             # Hugging Face returns a nested list [[...]], so flatten it
+#             embedding = result[0] if isinstance(result, list) and isinstance(result[0], list) else result
+
+#             return {"embeddings": embedding}
+
+
+# if __name__ == "__main__":
+#     # Example usage
+#     service = EmbeddingService()
+#     embedding = service.get_embedding("""Today is a sunny day and I will get some ice cream.""")
+#     print(f"Embedding length: {len(embedding['embeddings'])}")
+#     print(embedding['embeddings'][:10])
+
+
 import os
-from huggingface_hub import InferenceClient
-from typing import List, Dict, Any
+from typing import Dict, Any
 from dotenv import load_dotenv
-from app.core.config import settings
+from openai import OpenAI
+
 load_dotenv()
+
 
 class EmbeddingService:
     """
-    Wrapper around Hugging Face InferenceClient for generating embeddings.
+    Wrapper around OpenAI API for generating embeddings.
     """
 
     def __init__(
         self,
         api_key: str | None = None,
-        provider: str = "nebius",
-        model: str = "Qwen/Qwen3-Embedding-8B",
+        model: str = "text-embedding-3-small",
     ):
         """
         Initialize the embedding service.
 
         Args:
-            api_key (str | None): Hugging Face API token. Defaults to environment variable HF_TOKEN.
-            provider (str): Inference provider (default: 'nebius').
+            api_key (str | None): OpenAI API key. Defaults to environment variable OPENAI_API_KEY.
             model (str): Model ID to use for embeddings.
         """
-        self.api_key = api_key or settings.HF_TOKEN
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
-            raise ValueError("API key not provided. Set HF_TOKEN environment variable or pass it explicitly.")
+            raise ValueError(
+                "API key not provided. Set OPENAI_API_KEY environment variable or pass it explicitly."
+            )
 
         self.model = model
-        self.client = InferenceClient(provider=provider, api_key=self.api_key)
+        self.client = OpenAI()
 
-    def get_embedding(self, text: str) -> dict:
-            """
-            Generate an embedding vector for a given text.
+    def get_embedding(self, text: str) -> Dict[str, Any]:
+        """
+        Generate an embedding vector for a given text.
 
-            Args:
-                text (str): Input text.
+        Args:
+            text (str): Input text.
 
-            Returns:
-                dict: {"embeddings": [float, ...]}
-            """
-            result = self.client.feature_extraction(text, model=self.model)
-            result = result[0]
-
-            # Hugging Face returns a nested list [[...]], so flatten it
-            embedding = result[0] if isinstance(result, list) and isinstance(result[0], list) else result
-
-            return {"embeddings": embedding}
+        Returns:
+            dict: {"embeddings": [float, ...]}
+        """
+        response = self.client.embeddings.create(
+            input=text,
+            model=self.model,
+        )
+        embedding = response.data[0].embedding
+        return {"embeddings": embedding}
 
 
 if __name__ == "__main__":
     # Example usage
-    service = EmbeddingService()
-    embedding = service.get_embedding("""Today is a sunny day and I will get some ice cream.""")
+    service = OpenAIEmbeddingService()
+    embedding = service.get_embedding("Today is a sunny day and I will get some ice cream.")
     print(f"Embedding length: {len(embedding['embeddings'])}")
     print(embedding['embeddings'][:10])
 

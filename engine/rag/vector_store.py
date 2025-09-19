@@ -35,6 +35,7 @@ class VectorStore:
         Args:
             collection_name: Name of the collection to store documents
             dimension: Dimension of the embeddings (4096 for Qwen/Qwen3-Embedding-8B)
+            dimension: Dimension of the embeddings (1536 for openai/text-embedding-3-small)
         """
         self.collection_name = collection_name
         self.dimension = dimension

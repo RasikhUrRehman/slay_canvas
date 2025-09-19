@@ -43,7 +43,7 @@ class Settings:
         
         # File Storage
         self.UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./uploads")
-        self.MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", "100000000"))  # 100MB
+        self.MAX_FILE_SIZE = (os.getenv("MAX_FILE_SIZE", 10000))  # 100MB
         
         # Email Configuration
         self.SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
