@@ -12,8 +12,8 @@ import json
 
 # Import custom modules
 from engine.services.extractor import Extractor
-from engine.document_splitter import DocumentSplitter, ChunkedDocument
-from engine.vector_store import VectorStore
+from engine.rag.document_splitter import DocumentSplitter, ChunkedDocument
+from engine.rag.vector_store import VectorStore
 from engine.services.openrouter import OpenRouterClient
 from app.core.config import settings
 
@@ -80,13 +80,13 @@ class RAGSystem:
             # Initialize vector store
             self.vector_store = VectorStore(
                 collection_name=collection_name,
-                dimension=768  # NLP Cloud embedding dimension
+                dimension=4096  # Qwen embedding dimension
             )
             logger.info("✓ Vector store initialized")
             
             # Initialize OpenRouter client for generation
             openrouter_api_key = settings.OPENROUTER_API_KEY
-        openrouter_model = settings.OPENROUTER_MODEL
+            openrouter_model = settings.OPENROUTER_MODEL
 
             if openrouter_api_key:
                 self.llm_client = OpenRouterClient(model=openrouter_model, api_key=openrouter_api_key)

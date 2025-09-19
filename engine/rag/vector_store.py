@@ -28,13 +28,13 @@ logger = logging.getLogger("uvicorn")
 class VectorStore:
     """Vector store for document embeddings using Milvus and NLP Cloud embeddings."""
 
-    def __init__(self, collection_name: str = "documents", dimension: int = 768):
+    def __init__(self, collection_name: str = "documents", dimension: int = 4096):
         """
         Initialize the vector store.
         
         Args:
             collection_name: Name of the collection to store documents
-            dimension: Dimension of the embeddings (768 for paraphrase-multilingual-mpnet-base-v2)
+            dimension: Dimension of the embeddings (4096 for Qwen/Qwen3-Embedding-8B)
         """
         self.collection_name = collection_name
         self.dimension = dimension
