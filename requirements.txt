@@ -45,6 +45,7 @@ newspaper3k>=0.2.8
 selenium>=4.15.0
 webdriver-manager>=4.0.0
 instaloader>=4.9.0
+lxml-html-clean==0.2.0
 
 # Document Processing
 PyPDF2>=3.0.0

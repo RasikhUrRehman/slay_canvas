@@ -1,0 +1,926 @@
+"""
+Agent Router for Knowledge Base Management with Authentication
+Provides endpoints for knowledge base operations and agent communication
+with JWT authentication and user-specific data isolation.
+"""
+
+import logging
+import time
+import tempfile
+import os
+import io
+from typing import Dict, List, Any, Optional
+from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from engine.rag.rag_system import RAGSystem
+from engine.llm.agent import KnowledgeBaseAgent
+from engine.rag.vector_store import VectorStore
+from pymilvus import MilvusClient, utility
+from app.core.config import settings
+from app.utils.auth import get_current_user_id
+from app.db.session import get_db
+from app.services.conversation_service import conversation_service, message_service
+from app.models.message import MessageRole
+from app.schemas.conversation import ConversationCreate, MessageCreate
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/agent", tags=["agent"])
+
+
+def _get_knowledge_base(kb_name: str, user_id: int) -> VectorStore:
+    """
+    Get a knowledge base VectorStore instance by name for a specific user.
+    
+    Checks if collection exists in Milvus and returns VectorStore instance.
+    """
+    # Check if collection exists in Milvus directly
+    try:
+        # Use the exact collection name (user-provided name with user prefix)
+        collection_name = f"user_{user_id}_{kb_name.lower().replace(' ', '_')}"
+        temp_vector_store = VectorStore(collection_name="temp_discovery")
+        client = temp_vector_store.client
+        
+        # Check if collection exists
+        if client.has_collection(collection_name=collection_name):
+            vector_store = VectorStore(collection_name=collection_name)
+            return vector_store
+                
+    except Exception as e:
+        logger.warning(f"Error checking knowledge base {kb_name} for user {user_id}: {str(e)}")
+    
+    raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_name}' not found")
+
+
+# Pydantic models for request/response
+class CreateKnowledgeBaseRequest(BaseModel):
+    name: str
+    project_name: str
+    description: Optional[str] = None
+    chunk_size: int = 1000
+    chunk_overlap: int = 200
+
+
+class KnowledgeBaseInfo(BaseModel):
+    name: str
+    description: Optional[str]
+    document_count: int
+    chunk_count: int
+    created_at: str
+    stats: Dict[str, Any]
+
+
+class AddDocumentRequest(BaseModel):
+    url: str
+
+
+class AddTextRequest(BaseModel):
+    text: str
+    metadata: Dict[str, Any]
+
+
+class QueryAgentRequest(BaseModel):
+    message: str
+    knowledge_base_name: str
+    conversation_id: Optional[int] = None
+
+
+class ChatAgentRequest(BaseModel):
+    message: str
+    knowledge_base_name: str
+    conversation_id: Optional[int] = None
+
+
+class AgentResponse(BaseModel):
+    answer: str
+    tools_used: List[str]
+    reasoning: str
+    confidence: float
+    processing_time: float
+    sources: Optional[List[Dict[str, Any]]] = None
+    error: Optional[str] = None
+
+
+@router.post("/knowledge-bases", response_model=Dict[str, str])
+async def create_knowledge_base(
+    request: CreateKnowledgeBaseRequest,
+    current_user_id: int = Depends(get_current_user_id)
+):
+    """Create a new knowledge base for the authenticated user using VectorStore."""
+    try:
+        # Check if knowledge base already exists for this user
+        collection_name = f"user_{current_user_id}_{request.name.lower().replace(' ', '_')}"
+        temp_vector_store = VectorStore(collection_name="temp_discovery")
+        client = temp_vector_store.client
+        
+        if client.has_collection(collection_name=collection_name):
+            raise HTTPException(status_code=400, detail=f"Knowledge base '{request.name}' already exists")
+        
+        # Create VectorStore with user-specific collection name
+        vector_store = VectorStore(
+            collection_name=collection_name,
+            dimension=1536  # OpenAI text-embedding-3-small dimension
+        )
+        
+        logger.info(f"Created knowledge base: {request.name} for user {current_user_id}")
+        
+        return {
+            "message": f"Knowledge base '{request.name}' created successfully",
+            "name": request.name,
+            "project_name": request.project_name,
+            "collection_name": collection_name,
+            "user_id": str(current_user_id)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error creating knowledge base: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create knowledge base: {str(e)}")
+
+
+@router.get("/knowledge-bases", response_model=List[KnowledgeBaseInfo])
+async def list_knowledge_bases(current_user_id: int = Depends(get_current_user_id)):
+    """List all available knowledge bases for the authenticated user by discovering collections in Milvus."""
+    try:
+        knowledge_bases = []
+        
+        # Discover collections using VectorStore
+        try:
+            # Connect to Milvus through VectorStore to list collections
+            temp_vector_store = VectorStore(collection_name="temp_discovery")
+            client = temp_vector_store.client
+            
+            # List all collections in Milvus
+            collections = client.list_collections()
+            
+            # Filter collections for the current user
+            user_prefix = f"user_{current_user_id}_"
+            
+            for collection_name in collections:
+                try:
+                    # Skip system collections and collections not belonging to this user
+                    if collection_name.startswith("temp_") or collection_name in ["temp_discovery"]:
+                        continue
+                    
+                    if not collection_name.startswith(user_prefix):
+                        continue
+                    
+                    # Extract knowledge base name from collection name
+                    kb_name = collection_name[len(user_prefix):].replace("_", " ").title()
+                    
+                    # Use VectorStore to get collection statistics
+                    collection_vector_store = VectorStore(collection_name=collection_name)
+                    collection_stats = collection_vector_store.get_collection_stats()
+                    documents = collection_vector_store.list_all_documents()
+                    
+                    # Count unique documents by source_url
+                    unique_sources = set()
+                    for _, metadata in documents:
+                        source_url = metadata.get('source_url', '')
+                        if source_url:
+                            unique_sources.add(source_url)
+                    
+                    kb_info = KnowledgeBaseInfo(
+                        name=kb_name,
+                        description=f"Knowledge base: {kb_name}",
+                        document_count=len(unique_sources),
+                        chunk_count=collection_stats.get("total_entities", 0),
+                        created_at="unknown",
+                        stats={
+                            "collection_name": collection_name,
+                            "total_entities": collection_stats.get("total_entities", 0),
+                            "dimension": collection_stats.get("dimension", 0),
+                            "unique_sources": len(unique_sources)
+                        }
+                    )
+                    knowledge_bases.append(kb_info)
+                    
+                except Exception as e:
+                    logger.warning(f"Error processing collection {collection_name}: {str(e)}")
+                    continue
+                    
+        except Exception as e:
+            logger.warning(f"Error discovering collections: {str(e)}")
+        
+        return knowledge_bases
+        
+    except Exception as e:
+        logger.error(f"Error listing knowledge bases: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to list knowledge bases: {str(e)}")
+
+
+@router.get("/knowledge-bases/{kb_name}", response_model=KnowledgeBaseInfo)
+async def get_knowledge_base(
+    kb_name: str,
+    current_user_id: int = Depends(get_current_user_id)
+):
+    """Get information about a specific knowledge base for the authenticated user."""
+    try:
+        vector_store = _get_knowledge_base(kb_name, current_user_id)
+        
+        stats = vector_store.get_collection_stats()
+        documents = vector_store.list_all_documents()
+        
+        # Count unique documents by source_url
+        unique_sources = set()
+        for _, metadata in documents:
+            source_url = metadata.get('source_url', '')
+            if source_url:
+                unique_sources.add(source_url)
+        
+        return KnowledgeBaseInfo(
+            name=kb_name,
+            description=f"Test knowledge base: {kb_name}",
+            document_count=len(unique_sources),
+            chunk_count=stats.get("total_entities", 0),
+            created_at="unknown",
+            stats=stats
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting knowledge base {kb_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get knowledge base: {str(e)}")
+
+
+@router.delete("/knowledge-bases/{kb_name}")
+async def delete_knowledge_base(
+    kb_name: str,
+    current_user_id: int = Depends(get_current_user_id)
+):
+    """Delete a knowledge base and all its data using VectorStore."""
+    try:
+        vector_store = _get_knowledge_base(kb_name, current_user_id)
+        
+        # Drop the collection completely (this removes it from Milvus)
+        collection_name = vector_store.collection_name
+        vector_store.client.drop_collection(collection_name=collection_name)
+        
+        logger.info(f"Deleted knowledge base: {kb_name} for user {current_user_id}")
+        return {"message": f"Knowledge base '{kb_name}' deleted successfully"}
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting knowledge base {kb_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete knowledge base: {str(e)}")
+
+
+@router.post("/knowledge-bases/{kb_name}/documents/url")
+async def add_document_from_url(
+    kb_name: str, 
+    request: AddDocumentRequest,
+    current_user_id: int = Depends(get_current_user_id)
+):
+    """Add a document to the knowledge base from a URL using VectorStore."""
+    try:
+        vector_store = _get_knowledge_base(kb_name, current_user_id)
+        
+        # Import required services for document processing
+        from engine.services.extractor import Extractor
+        from engine.rag.document_splitter import DocumentSplitter
+        from datetime import datetime
+        
+        start_time = datetime.now()
+        
+        # Initialize extractor and splitter
+        extractor = Extractor()
+        splitter = DocumentSplitter()
+        
+        # Extract content from URL
+        logger.info(f"Extracting content from: {request.url}")
+        extracted_content = extractor.process_content(request.url)
+        
+        if not extracted_content.get("success", False):
+            error_msg = extracted_content.get("error_message", "Unknown extraction error")
+            logger.error(f"Extraction failed for {request.url}: {error_msg}")
+            raise HTTPException(status_code=400, detail=f"Failed to extract content: {error_msg}")
+        
+        # Split content into chunks
+        logger.info(f"Splitting content into chunks...")
+        chunks = splitter.split_extracted_content(extracted_content)
+        
+        if not chunks:
+            error_msg = "No content could be extracted for chunking"
+            logger.warning(f"No chunks created for {request.url}: {error_msg}")
+            raise HTTPException(status_code=400, detail=error_msg)
+        
+        # Prepare texts and metadata for vector store
+        texts = [chunk.text for chunk in chunks]
+        metadatas = []
+        
+        for chunk in chunks:
+            metadata = chunk.metadata.copy()
+            # Add user_id to metadata
+            metadata['user_id'] = current_user_id
+            metadatas.append(metadata)
+        
+        # Add to vector store
+        logger.info(f"Adding {len(chunks)} chunks to vector store...")
+        document_ids = vector_store.add_documents(texts, metadatas)
+        
+        processing_time = (datetime.now() - start_time).total_seconds()
+        
+        return {
+            "message": "Document added successfully",
+            "source_url": request.url,
+            "status": "completed",
+            "chunks_created": len(chunks),
+            "processing_time": processing_time,
+            "document_ids": document_ids
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding document from URL: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to add document: {str(e)}")
+
+
+@router.post("/knowledge-bases/{kb_name}/documents/text")
+async def add_text_document(
+    kb_name: str, 
+    request: AddTextRequest,
+    current_user_id: int = Depends(get_current_user_id)
+):
+    """Add a text document to the knowledge base using VectorStore."""
+    try:
+        vector_store = _get_knowledge_base(kb_name, current_user_id)
+        
+        # Import required services for document processing
+        from engine.rag.document_splitter import DocumentSplitter
+        from datetime import datetime
+        
+        start_time = datetime.now()
+        
+        # Create metadata with proper structure
+        source_id = request.metadata.get('source_url', f"custom_text_{kb_name}_{datetime.now().isoformat()}")
+        metadata = {
+            "source_url": source_id,
+            "title": request.metadata.get('title', 'Custom Text'),
+            "content_type": "text/plain",
+            "extraction_time": datetime.now().isoformat(),
+            "transcription_type": "custom",
+            "user_id": current_user_id,
+            **request.metadata
+        }
+        
+        # Split text into chunks using DocumentSplitter
+        splitter = DocumentSplitter(chunk_size=1000, chunk_overlap=200)
+        chunks = splitter.split_custom_text(request.text, metadata)
+        
+        if not chunks:
+            raise HTTPException(status_code=400, detail="No chunks could be created from the text")
+        
+        # Prepare texts and metadata for vector store
+        texts = [chunk.text for chunk in chunks]
+        metadatas = []
+        
+        for chunk in chunks:
+            chunk_metadata = chunk.metadata.copy()
+            # Ensure user_id is in metadata
+            chunk_metadata['user_id'] = current_user_id
+            # Add project_name if available in request metadata
+            if 'project_name' in request.metadata:
+                chunk_metadata['project_name'] = request.metadata['project_name']
+            metadatas.append(chunk_metadata)
+        
+        # Add to vector store
+        document_ids = vector_store.add_documents(texts, metadatas)
+        processing_time = (datetime.now() - start_time).total_seconds()
+        
+        return {
+            "message": "Text document added successfully",
+            "source_url": source_id,
+            "status": "completed",
+            "chunks_created": len(chunks),
+            "processing_time": processing_time,
+            "document_ids": document_ids
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding text document: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to add text document: {str(e)}")
+
+
+@router.post("/knowledge-bases/{kb_name}/documents/file")
+async def add_document_from_file(
+    kb_name: str, 
+    file: UploadFile = File(...),
+    current_user_id: int = Depends(get_current_user_id)
+):
+    """Add a document to the knowledge base from an uploaded file using Extractor."""
+    try:
+        vector_store = _get_knowledge_base(kb_name, current_user_id)
+        
+        # Import required services for document processing
+        from engine.services.extractor import Extractor
+        from engine.rag.document_splitter import DocumentSplitter
+        from datetime import datetime
+        
+        start_time = datetime.now()
+        
+        # Validate file type
+        allowed_extensions = {'.pdf', '.docx', '.txt', '.doc'}
+        file_extension = os.path.splitext(file.filename)[1].lower()
+        
+        if file_extension not in allowed_extensions:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Unsupported file type: {file_extension}. Allowed types: {', '.join(allowed_extensions)}"
+            )
+        
+        # Create temporary file to save uploaded content
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+            # Read and write file content
+            content = await file.read()
+            temp_file.write(content)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Initialize extractor and splitter
+            extractor = Extractor()
+            splitter = DocumentSplitter()
+            
+            # Process the file using extractor
+            logger.info(f"Processing uploaded file: {file.filename}")
+            extracted_content = extractor.process_content(temp_file_path)
+            
+            if not extracted_content.get("success", False):
+                error_msg = extracted_content.get("error_message", "Unknown extraction error")
+                logger.error(f"Extraction failed for {file.filename}: {error_msg}")
+                raise HTTPException(status_code=400, detail=f"Failed to extract content: {error_msg}")
+            
+            # Override the source_url to use the original filename instead of temp path
+            extracted_content["url"] = file.filename
+            if "metadata" not in extracted_content:
+                extracted_content["metadata"] = {}
+            extracted_content["metadata"]["title"] = file.filename
+            
+            # Split content into chunks
+            logger.info(f"Splitting content into chunks...")
+            chunks = splitter.split_extracted_content(extracted_content)
+            
+            if not chunks:
+                error_msg = "No content could be extracted for chunking"
+                logger.warning(f"No chunks created for {file.filename}: {error_msg}")
+                raise HTTPException(status_code=400, detail=error_msg)
+            
+            # Prepare texts and metadata for vector store
+            texts = [chunk.text for chunk in chunks]
+            metadatas = []
+            
+            for chunk in chunks:
+                metadata = chunk.metadata.copy()
+                # Add user_id and original filename to metadata
+                metadata['user_id'] = current_user_id
+                metadata['original_filename'] = file.filename
+                metadatas.append(metadata)
+            
+            # Add to vector store
+            logger.info(f"Adding {len(chunks)} chunks to vector store...")
+            document_ids = vector_store.add_documents(texts, metadatas)
+            
+            processing_time = (datetime.now() - start_time).total_seconds()
+            
+            return {
+                "message": "File document added successfully",
+                "filename": file.filename,
+                "status": "completed",
+                "chunks_created": len(chunks),
+                "processing_time": processing_time,
+                "document_ids": document_ids
+            }
+            
+        finally:
+            # Clean up temporary file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding file document: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to add file document: {str(e)}")
+
+
+@router.post("/knowledge-bases/{kb_name}/documents/audio")
+async def add_audio_file(
+    kb_name: str, 
+    file: UploadFile = File(...),
+    current_user_id: int = Depends(get_current_user_id)
+):
+    """Add an audio file to the knowledge base by transcribing it using Extractor."""
+    try:
+        vector_store = _get_knowledge_base(kb_name, current_user_id)
+        
+        # Import required services for audio processing
+        from datetime import datetime
+        
+        start_time = datetime.now()
+        
+        # Validate file type
+        allowed_extensions = {'.mp3', '.wav', '.m4a', '.mp4', '.avi', '.mov', '.flv', '.webm'}
+        file_extension = os.path.splitext(file.filename)[1].lower()
+        
+        if file_extension not in allowed_extensions:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Unsupported audio file type: {file_extension}. Allowed types: {', '.join(allowed_extensions)}"
+            )
+        
+        # Create temporary file to save uploaded audio content
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+            # Read and write file content
+            content = await file.read()
+            temp_file.write(content)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Initialize RAG system with the sanitized collection name
+            collection_name = kb_name.lower().replace(' ', '_')
+            rag_system = RAGSystem(collection_name=collection_name)
+            
+            # Process the audio file using RAG system (it handles transcription via extractor)
+            logger.info(f"Processing uploaded audio file: {file.filename}")
+            
+            # Use RAG system to process the audio file directly
+            # The extractor within RAG system will handle transcription
+            status = rag_system.add_document_from_url(temp_file_path)
+            
+            if status.status != "completed":
+                error_msg = status.error_message or "Unknown transcription error"
+                logger.error(f"Transcription failed for {file.filename}: {error_msg}")
+                raise HTTPException(status_code=400, detail=f"Failed to transcribe audio: {error_msg}")
+            
+            # Update the source_url in the vector store to use the original filename
+            # First delete the document with temp path, then re-add with correct source_url
+            rag_system.delete_document(temp_file_path)
+            
+            # Re-process with the correct source URL by temporarily renaming the file
+            import shutil
+            correct_path = os.path.join(os.path.dirname(temp_file_path), file.filename)
+            shutil.copy2(temp_file_path, correct_path)
+            
+            try:
+                status = rag_system.add_document_from_url(correct_path)
+                if status.status != "completed":
+                    error_msg = status.error_message or "Unknown transcription error"
+                    logger.error(f"Re-processing failed for {file.filename}: {error_msg}")
+                    raise HTTPException(status_code=400, detail=f"Failed to transcribe audio: {error_msg}")
+            finally:
+                # Clean up the copied file
+                if os.path.exists(correct_path):
+                    os.unlink(correct_path)
+            
+            processing_time = (datetime.now() - start_time).total_seconds()
+            
+            return {
+                "message": "Audio file transcribed and added successfully",
+                "filename": file.filename,
+                "file_type": file_extension,
+                "status": "completed",
+                "chunks_created": status.chunks_created,
+                "processing_time": processing_time,
+                "source_url": status.source_url,
+                "transcription_info": {
+                    "original_audio_file": file.filename,
+                    "transcription_method": "deepgram_api"
+                }
+            }
+            
+        finally:
+            # Clean up temporary file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding audio file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to add audio file: {str(e)}")
+
+
+@router.get("/knowledge-bases/{kb_name}/documents")
+async def list_documents(
+    kb_name: str,
+    current_user_id: int = Depends(get_current_user_id)
+):
+    """List all documents in the knowledge base for the authenticated user."""
+    try:
+        vector_store = _get_knowledge_base(kb_name, current_user_id)
+        
+        # Get all documents from vector store
+        documents = vector_store.list_all_documents()
+        
+        # Group by source URL to create document summaries
+        doc_map = {}
+        for text, metadata in documents:
+            source_url = metadata.get("source_url", "unknown")
+            if source_url not in doc_map:
+                # Use original_filename if available, otherwise fall back to title or source_url
+                display_name = metadata.get("original_filename") or metadata.get("title", "") or source_url
+                doc_map[source_url] = {
+                    "source_url": source_url,
+                    "content_type": metadata.get("content_type", ""),
+                    "title": display_name,
+                    "extraction_time": metadata.get("extraction_time", ""),
+                    "total_chunks": 0,
+                    "total_characters": 0
+                }
+            
+            doc_map[source_url]["total_chunks"] += 1
+            doc_map[source_url]["total_characters"] += len(text)
+        
+        documents_list = list(doc_map.values())
+        
+        return {
+            "knowledge_base": kb_name,
+            "document_count": len(documents_list),
+            "documents": documents_list
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing documents: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to list documents: {str(e)}")
+
+
+@router.delete("/knowledge-bases/{kb_name}/documents")
+async def delete_document(
+    kb_name: str, 
+    source_url: str,
+    current_user_id: int = Depends(get_current_user_id)
+):
+    """Delete a specific document from the knowledge base for the authenticated user."""
+    try:
+        vector_store = _get_knowledge_base(kb_name, current_user_id)
+        
+        # Delete document by source URL
+        deleted_count = vector_store.delete_by_source_url(source_url)
+        
+        if deleted_count > 0:
+            return {
+                "message": f"Document '{source_url}' deleted successfully",
+                "chunks_deleted": deleted_count
+            }
+        else:
+            raise HTTPException(status_code=404, detail=f"Document '{source_url}' not found")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting document: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")
+
+
+@router.post("/knowledge-bases/{kb_name}/query")
+async def query_agent(
+    kb_name: str, 
+    request: QueryAgentRequest,
+    current_user_id: int = Depends(get_current_user_id)
+):
+    """Query the agent using the specified knowledge base and return streaming response."""
+    try:
+        # Get the knowledge base
+        vector_store = _get_knowledge_base(kb_name, current_user_id)
+        
+        # Create agent for the knowledge base on demand
+        collection_name = vector_store.collection_name
+        agent = KnowledgeBaseAgent(rag_collection_name=collection_name)
+        
+        # Create streaming response generator
+        async def generate_response():
+            try:
+                # Get streaming response from agent
+                for chunk in agent.process_query_stream(request.message, []):
+                    yield f"data: {chunk}\n\n"
+                
+                # Send end of stream marker
+                yield "data: [DONE]\n\n"
+                
+            except Exception as e:
+                logger.error(f"Error in streaming response: {str(e)}")
+                yield f"data: Error: {str(e)}\n\n"
+                yield "data: [DONE]\n\n"
+        
+        return StreamingResponse(
+            generate_response(),
+            media_type="text/plain",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Content-Type": "text/event-stream"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error querying agent: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to query agent: {str(e)}")
+
+
+@router.post("/chat-agent")
+async def chat_agent(
+    request: ChatAgentRequest,
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Chat with the agent using streaming response.
+    Creates a new conversation if conversation_id is not provided.
+    Returns only the agent's answer without thinking steps.
+    """
+    try:
+        conversation_id = request.conversation_id
+        
+        # If no conversation_id provided, create a new conversation
+        if conversation_id is None:
+            conversation_data = ConversationCreate(
+                conversation_name=f"Chat with {request.knowledge_base_name}",
+                project_id=1  # You can modify this if you have project context
+            )
+            conversation = await conversation_service.create_conversation(
+                db=db,
+                conversation_data=conversation_data,
+                user_id=current_user_id
+            )
+            conversation_id = conversation.id
+        else:
+            # Verify the conversation belongs to the current user
+            conversation = await conversation_service.get_conversation_by_id(db, conversation_id)
+            if not conversation or conversation.user_id != current_user_id:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Save user message to database
+        user_message_data = MessageCreate(
+            content=request.message,
+            role=MessageRole.USER,
+            conversation_id=conversation_id,
+            user_id=current_user_id
+        )
+        user_message = await message_service.create_message(
+            db=db,
+            message_data=user_message_data
+        )
+        
+        # Load conversation history (last 10 messages for context)
+        conversation_with_messages = await conversation_service.get_conversation_by_id(db, conversation_id)
+        conversation_history = []
+        if conversation_with_messages and conversation_with_messages.messages:
+            # Get last 10 messages, excluding the current user message
+            recent_messages = conversation_with_messages.messages[-11:-1] if len(conversation_with_messages.messages) > 1 else []
+            for msg in recent_messages:
+                conversation_history.append({
+                    "role": msg.role.value.lower(),
+                    "content": msg.content
+                })
+        
+        # Get the knowledge base
+        vector_store = _get_knowledge_base(request.knowledge_base_name, current_user_id)
+        
+        # Initialize the agent
+        agent = KnowledgeBaseAgent(vector_store)
+        
+        async def generate_response():
+            """Generate streaming response with only the agent's answer"""
+            try:
+                full_response = ""
+                
+                # Stream the response from the agent
+                async for chunk in agent.process_query_stream(request.message, conversation_history):
+                    if chunk:
+                        full_response += chunk
+                        # Send only the content without any thinking steps or metadata
+                        yield f"data: {chunk}\n\n"
+                
+                # Save agent response to database
+                agent_message_data = MessageCreate(
+                    content=full_response,
+                    role=MessageRole.AGENT,
+                    conversation_id=conversation_id,
+                    user_id=current_user_id
+                )
+                await message_service.create_message(
+                    db=db,
+                    message_data=agent_message_data
+                )
+                
+                # Send conversation_id in the final message for client reference
+                yield f"data: [CONVERSATION_ID:{conversation_id}]\n\n"
+                yield f"data: [DONE]\n\n"
+                
+            except Exception as e:
+                logger.error(f"Error in streaming response: {str(e)}")
+                yield f"data: [ERROR: {str(e)}]\n\n"
+        
+        return StreamingResponse(
+            generate_response(),
+            media_type="text/plain",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Content-Type": "text/plain; charset=utf-8"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in chat agent: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to process chat: {str(e)}")
+
+
+@router.get("/health")
+async def health_check():
+    """Health check endpoint for the test router with Milvus status."""
+    try:
+        # Get basic router status
+        router_status = {
+            "status": "healthy",
+            "message": "Test Agent Router is running"
+        }
+        
+        # Get Milvus status using VectorStore
+        milvus_status = {}
+        try:
+            # Create a temporary VectorStore instance to check Milvus connection
+            temp_vector_store = VectorStore(collection_name="health_check_temp")
+            
+            # Connect directly to Milvus for more detailed status
+            milvus_host = settings.MILVUS_HOST
+            milvus_port = settings.MILVUS_PORT
+            milvus_uri = f"http://{milvus_host}:{milvus_port}"
+            
+            client = MilvusClient(uri=milvus_uri)
+            
+            # Get Milvus server info and collections
+            collections = client.list_collections()
+            
+            # Count test collections
+            test_collections = [c for c in collections if c.startswith("test_kb_")]
+            
+            # Get total statistics across all test collections
+            total_chunks = 0
+            collection_stats = {}
+            
+            for collection_name in test_collections:
+                try:
+                    stats = client.get_collection_stats(collection_name)
+                    row_count = stats.get("row_count", 0)
+                    total_chunks += row_count
+                    collection_stats[collection_name] = {
+                        "row_count": row_count,
+                        "status": "active"
+                    }
+                except Exception as e:
+                    collection_stats[collection_name] = {
+                        "row_count": 0,
+                        "status": "error",
+                        "error": str(e)
+                    }
+            
+            milvus_status = {
+                "connection": "healthy",
+                "host": milvus_host,
+                "port": milvus_port,
+                "uri": milvus_uri,
+                "total_collections": len(collections),
+                "test_collections": len(test_collections),
+                "total_test_chunks": total_chunks,
+                "collections": collection_stats
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting Milvus status: {str(e)}")
+            milvus_status = {
+                "connection": "error",
+                "error": str(e),
+                "host": settings.MILVUS_HOST,
+                "port": settings.MILVUS_PORT
+            }
+        
+        # Combine router and Milvus status
+        return {
+            **router_status,
+            "milvus": milvus_status
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in health check: {str(e)}")
+        return {
+            "status": "error",
+            "message": "Health check failed",
+            "error": str(e),
+            "milvus": {
+                "connection": "unknown",
+                "error": "Failed to check Milvus status"
+            }
+        }

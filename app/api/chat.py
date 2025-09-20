@@ -17,6 +17,11 @@ from pydantic import BaseModel, Field
 from app.db.session import get_db
 from app.services.auth_service import get_current_user
 from app.models.user import User
+from app.services.conversation_service import conversation_service, message_service
+from app.schemas.conversation import (
+    ConversationCreate, ConversationUpdate, ConversationPublic,
+    MessageCreate, MessageUpdate, MessagePublic
+)
 
 import sys
 import os
@@ -240,6 +245,226 @@ async def chat_completions(
             
     except Exception as e:
         logger.error(f"Chat completion error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Conversation Management Endpoints
+
+@router.post("/conversations", response_model=ConversationPublic)
+async def create_conversation(
+    conversation_data: ConversationCreate,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new conversation."""
+    try:
+        user = await get_current_user(db, credentials.credentials)
+        conversation = await conversation_service.create_conversation(
+            db, conversation_data, user.id
+        )
+        return ConversationPublic.from_orm(conversation)
+    except Exception as e:
+        logger.error(f"Error creating conversation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/conversations", response_model=List[ConversationPublic])
+async def get_conversations(
+    project_id: Optional[int] = None,
+    skip: int = 0,
+    limit: int = 100,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get conversations for the current user."""
+    try:
+        user = await get_current_user(db, credentials.credentials)
+        
+        if project_id:
+            conversations = await conversation_service.get_conversations_by_project(
+                db, project_id, user.id, skip, limit
+            )
+        else:
+            conversations = await conversation_service.get_conversations_by_user(
+                db, user.id, skip, limit
+            )
+        
+        return [ConversationPublic.from_orm(conv) for conv in conversations]
+    except Exception as e:
+        logger.error(f"Error getting conversations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/conversations/{conversation_id}", response_model=ConversationPublic)
+async def get_conversation(
+    conversation_id: int,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get a specific conversation with messages."""
+    try:
+        user = await get_current_user(db, credentials.credentials)
+        conversation = await conversation_service.get_conversation_by_id(db, conversation_id)
+        
+        if not conversation or conversation.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        return ConversationPublic.from_orm(conversation)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting conversation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/conversations/{conversation_id}", response_model=ConversationPublic)
+async def update_conversation(
+    conversation_id: int,
+    conversation_data: ConversationUpdate,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update a conversation."""
+    try:
+        user = await get_current_user(db, credentials.credentials)
+        conversation = await conversation_service.update_conversation(
+            db, conversation_id, conversation_data, user.id
+        )
+        
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        return ConversationPublic.from_orm(conversation)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating conversation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/conversations/{conversation_id}")
+async def delete_conversation(
+    conversation_id: int,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete a conversation."""
+    try:
+        user = await get_current_user(db, credentials.credentials)
+        success = await conversation_service.delete_conversation(db, conversation_id, user.id)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        return {"message": "Conversation deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting conversation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Message Management Endpoints
+
+@router.post("/conversations/{conversation_id}/messages", response_model=MessagePublic)
+async def create_message(
+    conversation_id: int,
+    message_data: MessageCreate,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new message in a conversation."""
+    try:
+        user = await get_current_user(db, credentials.credentials)
+        
+        # Verify conversation exists and belongs to user
+        conversation = await conversation_service.get_conversation_by_id(db, conversation_id)
+        if not conversation or conversation.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Set conversation_id and user_id
+        message_data.conversation_id = conversation_id
+        message_data.user_id = user.id
+        
+        message = await message_service.create_message(db, message_data)
+        return MessagePublic.from_orm(message)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating message: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/conversations/{conversation_id}/messages", response_model=List[MessagePublic])
+async def get_messages(
+    conversation_id: int,
+    skip: int = 0,
+    limit: int = 100,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get messages for a conversation."""
+    try:
+        user = await get_current_user(db, credentials.credentials)
+        
+        # Verify conversation exists and belongs to user
+        conversation = await conversation_service.get_conversation_by_id(db, conversation_id)
+        if not conversation or conversation.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        messages = await message_service.get_messages_by_conversation(
+            db, conversation_id, skip, limit
+        )
+        return [MessagePublic.from_orm(msg) for msg in messages]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting messages: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/messages/{message_id}", response_model=MessagePublic)
+async def update_message(
+    message_id: int,
+    message_data: MessageUpdate,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update a message."""
+    try:
+        user = await get_current_user(db, credentials.credentials)
+        message = await message_service.update_message(db, message_id, message_data, user.id)
+        
+        if not message:
+            raise HTTPException(status_code=404, detail="Message not found")
+        
+        return MessagePublic.from_orm(message)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating message: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/messages/{message_id}")
+async def delete_message(
+    message_id: int,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete a message."""
+    try:
+        user = await get_current_user(db, credentials.credentials)
+        success = await message_service.delete_message(db, message_id, user.id)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Message not found")
+        
+        return {"message": "Message deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting message: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

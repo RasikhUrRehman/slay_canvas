@@ -243,6 +243,83 @@ REASONING: [Brief explanation of your decision]"""
         
         return should_search, search_query
 
+    def process_query_stream(self, user_prompt: str, conversation_history: List[Dict[str, str]] = None):
+        """
+        Process a user query with streaming response, deciding whether to use tools.
+        
+        Args:
+            user_prompt: User's input prompt
+            conversation_history: Previous conversation messages for context
+            
+        Yields:
+            String chunks of the response
+        """
+        tools_used = []
+        sources = []
+        reasoning = ""
+        
+        try:
+            logger.info(f"Processing streaming user query: {user_prompt}")
+            
+            # Decide if knowledge base search is needed
+            should_search, search_query = self._should_use_knowledge_base(user_prompt)
+            
+            knowledge_context = ""
+            if should_search and search_query:
+                reasoning = f"Searching knowledge base for: '{search_query}'"
+                logger.info(reasoning)
+                
+                # Search knowledge base
+                search_result = self._search_knowledge_base_tool(search_query)
+                tools_used.append("search_knowledge_base")
+                
+                if search_result.success and search_result.data:
+                    # Prepare context from search results
+                    context_parts = []
+                    for result in search_result.data:
+                        context_parts.append(result["text"])
+                        sources.append({
+                            "text": result["text"][:200] + "..." if len(result["text"]) > 200 else result["text"],
+                            "similarity": result["similarity"],
+                            "source": result["source"]
+                        })
+                    
+                    knowledge_context = "\n\n".join(context_parts)
+                    reasoning += f" Found {len(search_result.data)} relevant documents."
+                else:
+                    reasoning += " No relevant documents found in knowledge base."
+            else:
+                reasoning = "No knowledge base search needed for this query."
+            
+            # Build messages for streaming
+            messages = []
+            
+            # Add system prompt
+            system_prompt = self.system_prompt
+            if knowledge_context:
+                system_prompt += f"\n\nKnowledge Base Context:\n{knowledge_context}"
+            
+            messages.append({"role": "system", "content": system_prompt})
+            
+            # Add conversation history if provided
+            if conversation_history:
+                messages.extend(conversation_history[-10:])  # Last 10 messages for context
+            
+            # Add current user message
+            messages.append({"role": "user", "content": user_prompt})
+            
+            # Get streaming response from LLM
+            for chunk in self.llm_client.chat_stream(
+                messages=messages,
+                max_tokens=self.max_tokens
+            ):
+                yield chunk
+                
+        except Exception as e:
+            error_msg = f"Failed to process streaming query: {e}"
+            logger.error(error_msg)
+            yield f"Error: {error_msg}"
+
     def process_query(self, user_prompt: str) -> AgentResponse:
         """
         Process a user query, deciding whether to use tools and generating a response.
