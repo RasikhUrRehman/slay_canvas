@@ -192,6 +192,134 @@ class RAGSystem:
             
             return self.processing_status[url]
     
+    def add_document_from_file(self, file_path: str, original_filename: str = None) -> DocumentStatus:
+        """
+        Add a document from a file path to the RAG system.
+        
+        Args:
+            file_path: Path to the file to process
+            original_filename: Original filename (if different from file_path)
+            
+        Returns:
+            DocumentStatus object with processing results
+        """
+        start_time = datetime.now()
+        
+        # Use original filename if provided, otherwise extract from file_path
+        if original_filename is None:
+            original_filename = os.path.basename(file_path)
+        
+        # Use original filename as the source identifier
+        source_identifier = original_filename
+        
+        logger.info(f"Processing document from file: {original_filename}")
+        
+        try:
+            # Check if file exists
+            if not os.path.exists(file_path):
+                error_msg = f"File not found: {file_path}"
+                logger.error(error_msg)
+                return DocumentStatus(
+                    source_url=source_identifier,
+                    status="error",
+                    chunks_created=0,
+                    processing_time=(datetime.now() - start_time).total_seconds(),
+                    error_message=error_msg
+                )
+            
+            # Update status
+            self.processing_status[source_identifier] = DocumentStatus(
+                source_url=source_identifier,
+                status="processing",
+                chunks_created=0,
+                processing_time=0.0
+            )
+            
+            # Extract content using the extractor
+            logger.info(f"Extracting content from file: {original_filename}")
+            extracted_content = self.extractor.process_content(file_path)
+            
+            if not extracted_content.get("success", False):
+                error_msg = extracted_content.get("error_message", "Unknown extraction error")
+                logger.error(f"Extraction failed for {original_filename}: {error_msg}")
+                
+                self.processing_status[source_identifier].status = "error"
+                self.processing_status[source_identifier].error_message = error_msg
+                self.processing_status[source_identifier].processing_time = (datetime.now() - start_time).total_seconds()
+                
+                return self.processing_status[source_identifier]
+            
+            # Split content into chunks
+            logger.info(f"Splitting content into chunks...")
+            chunks = self.splitter.split_extracted_content(extracted_content)
+            
+            if not chunks:
+                error_msg = "No content could be extracted for chunking"
+                logger.warning(f"No chunks created for {original_filename}: {error_msg}")
+                
+                self.processing_status[source_identifier].status = "error"
+                self.processing_status[source_identifier].error_message = error_msg
+                self.processing_status[source_identifier].processing_time = (datetime.now() - start_time).total_seconds()
+                
+                return self.processing_status[source_identifier]
+            
+            # Enhance metadata with file information
+            for chunk in chunks:
+                chunk.metadata.update({
+                    'source_type': 'file_upload',
+                    'original_filename': original_filename,
+                    'file_path': file_path,
+                    'upload_time': datetime.now().isoformat(),
+                    'source_url': source_identifier,  # Ensure source_url is set to original filename
+                    'title': original_filename  # Use original filename as title if not set
+                })
+            
+            # Prepare texts and metadata for vector store
+            texts = [chunk.text for chunk in chunks]
+            metadatas = [chunk.metadata for chunk in chunks]
+            
+            # Add to vector store
+            logger.info(f"Adding {len(chunks)} chunks to vector store...")
+            document_ids = self.vector_store.add_documents(texts, metadatas)
+            
+            # Clean up temporary file if it exists and is in a temp directory
+            try:
+                if 'temp' in file_path.lower() or 'tmp' in file_path.lower():
+                    os.remove(file_path)
+                    logger.info(f"Cleaned up temporary file: {file_path}")
+            except Exception as cleanup_error:
+                logger.warning(f"Could not clean up file {file_path}: {cleanup_error}")
+            
+            # Update status
+            processing_time = (datetime.now() - start_time).total_seconds()
+            
+            self.processing_status[source_identifier] = DocumentStatus(
+                source_url=source_identifier,
+                status="completed",
+                chunks_created=len(chunks),
+                processing_time=processing_time,
+                extraction_metadata=extracted_content.get("metadata", {})
+            )
+            
+            logger.info(f"✓ Successfully processed {original_filename}: {len(chunks)} chunks in {processing_time:.2f}s")
+            return self.processing_status[source_identifier]
+            
+        except Exception as e:
+            error_msg = f"Error processing document: {str(e)}"
+            logger.error(f"Failed to process {original_filename}: {error_msg}")
+            
+            processing_time = (datetime.now() - start_time).total_seconds()
+            
+            self.processing_status[source_identifier] = DocumentStatus(
+                source_url=source_identifier,
+                status="error",
+                chunks_created=0,
+                processing_time=processing_time,
+                error_message=error_msg
+            )
+            
+            return self.processing_status[source_identifier]
+    
     def add_custom_text(self, text: str, metadata: Dict[str, Any]) -> DocumentStatus:
         """
         Add custom text content to the RAG system.
@@ -310,10 +438,14 @@ class RAGSystem:
                 # Convert distance to similarity score (cosine distance -> similarity)
                 similarity = 1.0 - distance
                 
+                # Use original_filename for better source attribution
+                source_name = metadata.get("original_filename") or metadata.get("source_url", "Unknown source")
+                
                 source = {
                     "text": text,
                     "similarity": similarity,
-                    "metadata": metadata
+                    "metadata": metadata,
+                    "source_name": source_name  # Add explicit source name for display
                 }
                 sources.append(source)
                 context_texts.append(text)
@@ -334,7 +466,8 @@ class RAGSystem:
                 # Fallback: return relevant chunks as answer
                 answer = f"Here are {len(search_results)} relevant pieces of information:\n\n"
                 for i, (text, _, metadata) in enumerate(search_results, 1):
-                    source_info = metadata.get("source_url", "Unknown source")
+                    # Use original_filename for better source attribution
+                    source_info = metadata.get("original_filename") or metadata.get("source_url", "Unknown source")
                     answer += f"{i}. From {source_info}:\n{text[:300]}{'...' if len(text) > 300 else ''}\n\n"
                 confidence = max(1.0 - search_results[0][1], 0.0) if search_results else 0.0
             
@@ -375,14 +508,14 @@ class RAGSystem:
             Tuple of (answer, confidence)
         """
         prompt = f"""Based on the following context, please provide a comprehensive answer to the question.
-If the context doesn't contain enough information to answer the question, please say so.
+        If the context doesn't contain enough information to answer the question, please say so.
 
-Context:
-{context}
+        Context:
+        {context}
 
-Question: {question}
+        Question: {question}
 
-Answer:"""
+        Answer:"""
         
         try:
             response = self.llm_client.chat_completion(
@@ -455,12 +588,13 @@ Answer:"""
             # Group by source URL
             doc_map = {}
             for text, metadata in documents:
-                source_url = metadata.get("source_url", "unknown")
+                # Use original_filename if available, otherwise fall back to source_url
+                source_url = metadata.get("original_filename") or metadata.get("source_url", "unknown")
                 if source_url not in doc_map:
                     doc_map[source_url] = {
                         "source_url": source_url,
                         "content_type": metadata.get("content_type", ""),
-                        "title": metadata.get("title", ""),
+                        "title": metadata.get("original_filename") or metadata.get("title", ""),
                         "extraction_time": metadata.get("extraction_time", ""),
                         "total_chunks": 0,
                         "total_characters": 0

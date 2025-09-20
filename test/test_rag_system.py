@@ -20,6 +20,9 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from engine.rag.rag_system import RAGSystem, RAGResponse, DocumentStatus
 from app.core.config import settings
 
+# Import OpenRouter client
+from engine.services.openrouter import OpenRouterClient
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -246,6 +249,161 @@ class RAGTester:
                 error_message=error_msg
             )
     
+    def chat_with_rag_and_openrouter(self, question: str, k: Optional[int] = None, 
+                                   content_type_filter: Optional[str] = None,
+                                   show_sources: bool = True,
+                                   openrouter_model: Optional[str] = None,
+                                   max_tokens: int = 1000,
+                                   temperature: float = 0.3) -> Dict[str, Any]:
+        """
+        Chat using RAG for retrieval and OpenRouter client directly for LLM generation.
+        
+        Args:
+            question: Question to ask
+            k: Number of documents to retrieve (uses system default if None)
+            content_type_filter: Filter by content type
+            show_sources: Whether to display source information
+            openrouter_model: OpenRouter model to use (uses default if None)
+            max_tokens: Maximum tokens for generation
+            temperature: Temperature for generation
+            
+        Returns:
+            Dictionary with answer, sources, and metadata
+        """
+        if not self.rag_system:
+            logger.error("❌ RAG system not initialized")
+            return {
+                "error": "RAG system not initialized",
+                "answer": "",
+                "sources": [],
+                "query": question,
+                "confidence": 0.0,
+                "processing_time": 0.0
+            }
+        
+        try:
+            logger.info(f"💬 Processing query with RAG + OpenRouter: {question}")
+            print(f"\n🤔 Question: {question}")
+            print("🔍 Retrieving relevant chunks from RAG system...")
+            
+            start_time = time.time()
+            
+            # Step 1: Use RAG system for retrieval only (no answer generation)
+            rag_response = self.rag_system.query(
+                question=question,
+                k=k,
+                content_type_filter=content_type_filter,
+                generate_answer=False  # Only retrieve, don't generate
+            )
+            
+            if not rag_response.sources:
+                print("❌ No relevant information found in the knowledge base.")
+                return {
+                    "answer": "I couldn't find any relevant information for your question.",
+                    "sources": [],
+                    "query": question,
+                    "confidence": 0.0,
+                    "processing_time": time.time() - start_time
+                }
+            
+            print(f"✅ Found {len(rag_response.sources)} relevant chunks")
+            
+            # Step 2: Prepare context from retrieved chunks
+            context_texts = []
+            for source in rag_response.sources:
+                context_texts.append(source.get("text", ""))
+            
+            context = "\n\n".join(context_texts)
+            
+            # Step 3: Use OpenRouter client directly for generation
+            print("🤖 Generating answer using OpenRouter...")
+            
+            # Initialize OpenRouter client
+            openrouter_client = OpenRouterClient(
+                model=openrouter_model or settings.OPENROUTER_MODEL,
+                api_key=settings.OPENROUTER_API_KEY
+            )
+            
+            # Create prompt for the LLM
+            prompt = f"""Based on the following context, please provide a comprehensive and accurate answer to the question.
+If the context doesn't contain enough information to answer the question completely, please say so and provide what information is available.
+
+Context:
+{context}
+
+Question: {question}
+
+Answer:"""
+            
+            # Generate answer using OpenRouter
+            llm_response = openrouter_client.chat_completion(
+                messages=[{"role": "user", "content": prompt}],
+                model=openrouter_model,
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+            
+            if "error" in llm_response:
+                raise Exception(f"OpenRouter error: {llm_response['error']}")
+            
+            answer = llm_response.get("choices", [{}])[0].get("message", {}).get("content", "")
+            
+            if not answer:
+                answer = "I couldn't generate a proper answer based on the retrieved information."
+            
+            # Calculate simple confidence based on retrieval quality
+            avg_similarity = sum(source.get("similarity", 0) for source in rag_response.sources) / len(rag_response.sources)
+            confidence = min(avg_similarity, 1.0)
+            
+            processing_time = time.time() - start_time
+            
+            # Display results
+            print(f"\n💡 Generated Answer (Confidence: {confidence:.2f}):")
+            print("-" * 50)
+            print(answer)
+            print("-" * 50)
+            
+            if show_sources and rag_response.sources:
+                print(f"\n📚 Sources ({len(rag_response.sources)} found):")
+                for i, source in enumerate(rag_response.sources, 1):
+                    metadata = source.get('metadata', {})
+                    source_url = metadata.get('source_url', 'Unknown source')
+                    print(f"\n{i}. 📄 {source_url}")
+                    print(f"   📊 Similarity: {source.get('similarity', 0):.3f}")
+                    print(f"   📝 Content: {source.get('text', '')[:200]}...")
+                    if metadata.get('content_type'):
+                        print(f"   🏷️  Type: {metadata['content_type']}")
+            
+            print(f"\n⏱️  Total processing time: {processing_time:.2f}s")
+            
+            # Return structured response
+            result = {
+                "answer": answer,
+                "sources": rag_response.sources,
+                "query": question,
+                "confidence": confidence,
+                "processing_time": processing_time,
+                "retrieval_time": rag_response.processing_time,
+                "generation_model": openrouter_model or settings.OPENROUTER_MODEL,
+                "tokens_used": llm_response.get("usage", {})
+            }
+            
+            logger.info(f"✅ Query processed successfully in {processing_time:.2f}s")
+            return result
+            
+        except Exception as e:
+            error_msg = f"Failed to process query with RAG + OpenRouter: {e}"
+            logger.error(f"❌ {error_msg}")
+            
+            return {
+                "error": error_msg,
+                "answer": f"Error: {error_msg}",
+                "sources": [],
+                "query": question,
+                "confidence": 0.0,
+                "processing_time": time.time() - start_time if 'start_time' in locals() else 0.0
+            }
+    
     def chat_with_rag(self, question: str, k: Optional[int] = None, 
                      content_type_filter: Optional[str] = None,
                      generate_answer: bool = True, 
@@ -316,20 +474,29 @@ class RAGTester:
                 processing_time=0.0,
                 error=error_msg
             )
-    
+
     def interactive_chat(self):
         """Start an interactive chat session with the RAG system."""
         if not self.rag_system:
             print("❌ RAG system not initialized. Please initialize first.")
             return
         
+        print("RAG Stats: ", self.rag_system.get_system_stats())
+        print("Documents :", self.rag_system.list_documents())
+
         print("\n" + "="*60)
         print("🤖 INTERACTIVE RAG CHAT SESSION")
         print("="*60)
         print("💡 Type your questions and press Enter")
         print("💡 Type 'stats' to see system statistics")
+        print("💡 Type 'openrouter' to use RAG + OpenRouter mode")
+        print("💡 Type 'standard' to use standard RAG mode")
         print("💡 Type 'quit' or 'exit' to end the session")
         print("-" * 60)
+        
+        # Default mode
+        use_openrouter = True
+        print("🔧 Default mode: RAG + OpenRouter (separate retrieval and generation)")
         
         while True:
             try:
@@ -343,19 +510,34 @@ class RAGTester:
                     self.print_system_stats()
                     continue
                 
+                if question.lower() == 'openrouter':
+                    use_openrouter = True
+                    print("🔧 Switched to RAG + OpenRouter mode (separate retrieval and generation)")
+                    continue
+                
+                if question.lower() == 'standard':
+                    use_openrouter = False
+                    print("🔧 Switched to standard RAG mode (integrated retrieval and generation)")
+                    continue
+                
                 if not question:
                     print("❓ Please enter a question.")
                     continue
                 
-                # Process the question
-                self.chat_with_rag(question)
+                # Process the question based on selected mode
+                if use_openrouter:
+                    print("🔧 Using RAG + OpenRouter mode...")
+                    self.chat_with_rag_and_openrouter(question)
+                else:
+                    print("🔧 Using standard RAG mode...")
+                    self.chat_with_rag(question)
                 
             except KeyboardInterrupt:
                 print("\n👋 Chat session interrupted. Goodbye!")
                 break
             except Exception as e:
                 print(f"❌ Error: {e}")
-    
+
     def run_test_suite(self, test_urls: List[str] = None, test_texts: List[Dict[str, Any]] = None):
         """
         Run a comprehensive test suite with sample data.
@@ -403,26 +585,48 @@ class RAGTester:
         print("\n4️⃣  Testing system stats (populated system)...")
         self.print_system_stats()
         
-        # Test 5: Sample queries
+        # Test 5: Sample queries with both approaches
         sample_questions = [
             "What is the main topic of the documents?",
             "Can you summarize the key points?",
             "What are the most important concepts mentioned?"
         ]
         
-        print("\n5️⃣  Testing RAG queries...")
+        print("\n5️⃣  Testing RAG queries with both approaches...")
+        
+        # Test with RAG + OpenRouter approach
+        print("\n🔧 Testing RAG + OpenRouter approach (separate retrieval and generation):")
         for i, question in enumerate(sample_questions, 1):
-            print(f"\n🤔 Test query {i}/{len(sample_questions)}")
-            response = self.chat_with_rag(question)
-            if response.error:
-                print(f"❌ Query failed: {response.error}")
-            else:
-                print(f"✅ Query successful (confidence: {response.confidence:.2f})")
+            print(f"\n🤔 Test query {i}/{len(sample_questions)} (RAG + OpenRouter)")
+            try:
+                response = self.chat_with_rag_and_openrouter(question)
+                if "error" in response:
+                    print(f"❌ Query failed: {response['error']}")
+                else:
+                    print(f"✅ Query successful (confidence: {response['confidence']:.2f})")
+            except Exception as e:
+                print(f"❌ RAG + OpenRouter query failed: {e}")
+        
+        # Test with standard RAG approach
+        print("\n🔧 Testing standard RAG approach (integrated retrieval and generation):")
+        for i, question in enumerate(sample_questions, 1):
+            print(f"\n🤔 Test query {i}/{len(sample_questions)} (Standard RAG)")
+            try:
+                response = self.chat_with_rag(question)
+                if response.error:
+                    print(f"❌ Query failed: {response.error}")
+                else:
+                    print(f"✅ Query successful (confidence: {response.confidence:.2f})")
+            except Exception as e:
+                print(f"❌ Standard RAG query failed: {e}")
         
         print("\n" + "="*60)
         print("🎉 TEST SUITE COMPLETED!")
+        print("💡 Both RAG approaches have been tested:")
+        print("   - RAG + OpenRouter: Separate retrieval and generation")
+        print("   - Standard RAG: Integrated retrieval and generation")
         print("="*60)
-    
+
     def cleanup(self):
         """Clean up test resources."""
         if self.rag_system:
@@ -441,8 +645,7 @@ def main():
     
     # Sample test data
     test_urls = [
-        "https://en.wikipedia.org/wiki/Artificial_intelligence",
-        "https://en.wikipedia.org/wiki/Machine_learning"
+        "Machine learning is the subdomain of Artificial Intelligence. AI includes Deep Learning, Machine Vision, and Natural Language Processing."
     ]
     
     test_texts = [

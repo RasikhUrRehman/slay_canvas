@@ -36,7 +36,9 @@ class KnowledgeBaseViewer:
             True if connection successful, False otherwise
         """
         try:
-            self.rag_system = RAGSystem(collection_name=self.knowledge_base_name)
+            # Sanitize collection name to ensure Milvus compatibility
+            sanitized_name = self.knowledge_base_name.lower().replace(' ', '_')
+            self.rag_system = RAGSystem(collection_name=sanitized_name)
             return True
         except Exception as e:
             print(f"❌ Error connecting to knowledge base '{self.knowledge_base_name}': {str(e)}")
