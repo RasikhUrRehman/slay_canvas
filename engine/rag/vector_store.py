@@ -84,6 +84,9 @@ class VectorStore:
         schema.add_field(field_name="extraction_time", datatype=DataType.VARCHAR, max_length=50)
         schema.add_field(field_name="transcription_type", datatype=DataType.VARCHAR, max_length=50)
         schema.add_field(field_name="original_filename", datatype=DataType.VARCHAR, max_length=500)
+        # User and project identification fields
+        schema.add_field(field_name="user_id", datatype=DataType.INT64)
+        schema.add_field(field_name="project_name", datatype=DataType.VARCHAR, max_length=200)
         
         # Create collection
         self.client.create_collection(
@@ -173,7 +176,9 @@ class VectorStore:
                 "chunk_size": metadata.get("chunk_size", len(text)),
                 "extraction_time": metadata.get("extraction_time", ""),
                 "transcription_type": metadata.get("transcription_type", "text"),
-                "original_filename": metadata.get("original_filename", "")
+                "original_filename": metadata.get("original_filename", ""),
+                "user_id": metadata.get("user_id", 0),
+                "project_name": metadata.get("project_name", "")
             }
             entities.append(entity)
 
@@ -215,7 +220,8 @@ class VectorStore:
                 logger.error(f"Failed to check/load collection: {e}, check error: {check_error}")
                 raise
 
-    def similarity_search(self, query: str, k: int = 5, content_type_filter: Optional[str] = None) -> List[Tuple[str, float, Dict]]:
+    def similarity_search(self, query: str, k: int = 5, content_type_filter: Optional[str] = None, 
+                         user_id: Optional[int] = None, project_name: Optional[str] = None) -> List[Tuple[str, float, Dict]]:
         """
         Search for similar documents.
         
@@ -223,6 +229,8 @@ class VectorStore:
             query: Query text
             k: Number of results to return
             content_type_filter: Optional filter by content type
+            user_id: Optional filter by user ID
+            project_name: Optional filter by project name
             
         Returns:
             List of tuples (document, distance, metadata)
@@ -233,10 +241,16 @@ class VectorStore:
         # Generate query embedding using the embedding service
         query_embedding = self._get_embeddings([query])[0]
 
-        # Build filter expression if needed
-        filter_expr = None
+        # Build filter expression
+        filter_conditions = []
         if content_type_filter:
-            filter_expr = f'content_type == "{content_type_filter}"'
+            filter_conditions.append(f'content_type == "{content_type_filter}"')
+        if user_id is not None:
+            filter_conditions.append(f'user_id == {user_id}')
+        if project_name:
+            filter_conditions.append(f'project_name == "{project_name}"')
+        
+        filter_expr = " && ".join(filter_conditions) if filter_conditions else None
 
         # Search in collection
         search_params = {"metric_type": "COSINE", "params": {"nprobe": 10}}
@@ -249,7 +263,8 @@ class VectorStore:
             limit=k,
             filter=filter_expr,
             output_fields=["text", "source_url", "content_type", "title", "chunk_index", 
-                          "total_chunks", "chunk_size", "extraction_time", "transcription_type", "original_filename"]
+                          "total_chunks", "chunk_size", "extraction_time", "transcription_type", "original_filename",
+                          "user_id", "project_name"]
         )
 
         # Format results
@@ -264,7 +279,9 @@ class VectorStore:
                 "chunk_size": hit["entity"]["chunk_size"],
                 "extraction_time": hit["entity"]["extraction_time"],
                 "transcription_type": hit["entity"]["transcription_type"],
-                "original_filename": hit["entity"].get("original_filename", "")
+                "original_filename": hit["entity"].get("original_filename", ""),
+                "user_id": hit["entity"].get("user_id", 0),
+                "project_name": hit["entity"].get("project_name", "")
             }
             formatted_results.append((hit["entity"]["text"], hit["distance"], metadata))
 
