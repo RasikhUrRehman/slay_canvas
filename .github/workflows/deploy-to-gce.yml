@@ -42,7 +42,7 @@ jobs:
 
           source .venv/bin/activate
 
-          sudo echo "${{ vars.ENV_FILE_PROD }}" > /home/kjmannn17/slay_canvas/.env
+          sudo sh -c 'echo "${{ vars.ENV_FILE_PROD }}" > /home/kjmannn17/slay_canvas/.env'
 
           # Install requirements into venv
           /home/kjmannn17/slay_canvas/.venv/bin/pip install --upgrade pip
