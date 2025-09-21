@@ -33,10 +33,17 @@ jobs:
       - name: Deploy to GCE
         run: |
           ssh -o StrictHostKeyChecking=no slay-canvas-deploy@${{ secrets.GCE_VM_IP }} << 'EOF'
-            set -x
-            cd /home/kjmannn17/slay_canvas
-            sudo git fetch origin main
-            sudo git reset --hard origin/main
-            /home/kjmannn17/slay_canvas/.venv/bin/pip install -r requirements.txt
-            sudo systemctl restart slay_canvas
+          set -x
+          cd /home/kjmannn17/slay_canvas
+
+          # Update repo
+          git fetch origin main
+          git reset --hard origin/main
+
+          # Install requirements into venv
+          /home/kjmannn17/slay_canvas/.venv/bin/pip install --upgrade pip
+          /home/kjmannn17/slay_canvas/.venv/bin/pip install -r requirements.txt
+
+          # Restart service
+          sudo systemctl restart slay_canvas
           EOF
