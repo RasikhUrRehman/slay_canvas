@@ -143,21 +143,29 @@ async def google_callback(
                 jwt_token = create_access_token(data={"sub": str(user.id), "email": user.email})
                 
                 # Return structured response with database user
-                return {
-                    "message": "🎉 Google OAuth login successful! User saved to database.",
-                    "user": {
-                        "id": user.id,
-                        "email": user.email,
-                        "name": user.name,
-                        "avatar_url": user.avatar_url,
-                        "is_active": user.is_active,
-                        "subscription_plan": user.subscription_plan,
-                        "created_at": user.created_at.isoformat()
-                    },
+                # return {
+                #     "message": "🎉 Google OAuth login successful! User saved to database.",
+                #     "user": {
+                #         "id": user.id,
+                #         "email": user.email,
+                #         "name": user.name,
+                #         "avatar_url": user.avatar_url,
+                #         "is_active": user.is_active,
+                #         "subscription_plan": user.subscription_plan,
+                #         "created_at": user.created_at.isoformat()
+                #     },
+                #     "access_token": jwt_token,
+                #     "token_type": "bearer",
+                #     "database_integration": "✅ Active"
+                # }
+
+                # redirect to frontend with tokens in query params (not secure for production)
+                redirect_url = f"{settings.FRONTEND_ORIGIN}/form?" + urlencode({
                     "access_token": jwt_token,
                     "token_type": "bearer",
-                    "database_integration": "✅ Active"
-                }
+                })
+
+                return RedirectResponse(url=redirect_url)
                 
             except Exception as db_error:
                 logger.warning(f"Database save failed: {db_error}")
