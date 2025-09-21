@@ -38,5 +38,5 @@ jobs:
             sudo git fetch origin main
             sudo git reset --hard origin/main
             /home/kjmannn17/slay_canvas/.venv/bin/pip install -r requirements.txt
-            systemctl restart slay_canvas
+            sudo systemctl restart slay_canvas
           EOF
