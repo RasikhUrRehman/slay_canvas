@@ -37,8 +37,8 @@ jobs:
           cd /home/kjmannn17/slay_canvas
 
           # Update repo
-          git fetch origin main
-          git reset --hard origin/main
+          sudo git fetch origin main
+          sudo git reset --hard origin/main
 
           source .venv/bin/activate
 
