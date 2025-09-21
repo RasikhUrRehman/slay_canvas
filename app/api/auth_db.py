@@ -2,23 +2,31 @@
 Authentication API with database integration
 Handles Google OAuth login, manual registration, login, and password reset
 """
-from fastapi import APIRouter, HTTPException, Depends, Request, Response
-from fastapi.responses import RedirectResponse, JSONResponse
-from sqlalchemy.ext.asyncio import AsyncSession
-import httpx
-import secrets
 import logging
-from typing import Dict, Any
+import secrets
+from typing import Any, Dict
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import JSONResponse, RedirectResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.session import get_async_session
-from app.services.user_service import UserService
 from app.schemas.user import (
-    UserInDB, UserPublic, UserRegistration, UserLogin, 
-    PasswordResetRequest, PasswordResetVerify, AuthResponse, MessageResponse
+    AuthResponse,
+    MessageResponse,
+    PasswordResetRequest,
+    PasswordResetVerify,
+    UserInDB,
+    UserLogin,
+    UserPublic,
+    UserRegistration,
 )
+from app.services.otp_service import OTPService
+from app.services.user_service import UserService
 from app.utils.auth import create_access_token, get_current_user_id
-from app.utils.security import otp_manager, email_service, password_hasher
+from app.utils.security import email_service, password_hasher
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -28,6 +36,9 @@ oauth_states: Dict[str, bool] = {}
 
 def get_user_service() -> UserService:
     return UserService()
+
+def get_otp_service() -> OTPService:
+    return OTPService()
 
 @router.get("/google/login")
 async def google_login():
@@ -244,7 +255,8 @@ async def login_user(
 async def forgot_password(
     request_data: PasswordResetRequest,
     db: AsyncSession = Depends(get_async_session),
-    user_service: UserService = Depends(get_user_service)
+    user_service: UserService = Depends(get_user_service),
+    otp_service: OTPService = Depends(get_otp_service)
 ):
     """Send OTP to user's email for password reset"""
     
@@ -256,7 +268,7 @@ async def forgot_password(
             return MessageResponse(message="If this email is registered, you will receive an OTP shortly")
         
         # Generate and send OTP
-        otp = otp_manager.generate_otp(request_data.email)
+        otp = await otp_service.generate_otp(db, request_data.email)
         email_sent = await email_service.send_otp_email(request_data.email, otp)
         
         if not email_sent:
@@ -274,7 +286,8 @@ async def forgot_password(
 async def reset_password(
     reset_data: PasswordResetVerify,
     db: AsyncSession = Depends(get_async_session),
-    user_service: UserService = Depends(get_user_service)
+    user_service: UserService = Depends(get_user_service),
+    otp_service: OTPService = Depends(get_otp_service)
 ):
     """Reset password with OTP verification"""
     
@@ -288,12 +301,13 @@ async def reset_password(
         raise HTTPException(status_code=400, detail=f"Password requirements not met: {', '.join(errors)}")
     
     try:
-        # Verify OTP
-        if not otp_manager.verify_otp(reset_data.email, reset_data.otp):
+        # Verify OTP and get associated email
+        email = await otp_service.verify_otp_and_get_email(db, reset_data.otp)
+        if not email:
             raise HTTPException(status_code=400, detail="Invalid or expired OTP")
         
-        # Reset password
-        success = await user_service.reset_password(db, reset_data.email, reset_data.new_password)
+        # Reset password using the email from OTP
+        success = await user_service.reset_password(db, email, reset_data.new_password)
         if not success:
             raise HTTPException(status_code=404, detail="User not found")
         
