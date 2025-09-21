@@ -1,11 +1,12 @@
 import hashlib
+import logging
+import os
 import secrets
 import smtplib
-from typing import Optional
-import logging
-from passlib.context import CryptContext
 from datetime import datetime, timedelta
-import os
+from typing import Optional
+
+from passlib.context import CryptContext
 
 logger = logging.getLogger(__name__)
 
@@ -50,69 +51,68 @@ class PasswordHasher:
 
 
 class OTPManager:
-    """Utility class for OTP generation and verification"""
-    
-    # In-memory storage for OTPs (in production, use Redis or database)
-    _otp_storage = {}
+    """Utility class for OTP generation and verification using database storage"""
     
     @staticmethod
     def generate_otp(email: str, length: int = 6, expiry_minutes: int = 10) -> str:
-        """Generate an OTP for an email with expiry"""
+        """
+        DEPRECATED: This method is kept for backward compatibility.
+        Use OTPService.generate_otp() with database session instead.
+        """
+        import warnings
+        warnings.warn(
+            "OTPManager.generate_otp is deprecated. Use OTPService.generate_otp with database session.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        # Generate OTP for backward compatibility (will be logged but not stored)
         otp = ''.join([str(secrets.randbelow(10)) for _ in range(length)])
-        expiry_time = datetime.utcnow() + timedelta(minutes=expiry_minutes)
-        
-        OTPManager._otp_storage[email] = {
-            'otp': otp,
-            'expires_at': expiry_time,
-            'attempts': 0
-        }
-        
-        logger.info(f"Generated OTP for {email}: {otp} (expires at {expiry_time})")
+        logger.warning(f"Using deprecated OTPManager.generate_otp for {email}. OTP: {otp}")
         return otp
     
     @staticmethod
     def verify_otp(email: str, otp: str, max_attempts: int = 3) -> bool:
-        """Verify an OTP for an email with attempt limits and expiry"""
-        otp_data = OTPManager._otp_storage.get(email)
-        
-        if not otp_data:
-            return False
-        
-        # Check if OTP has expired
-        if datetime.utcnow() > otp_data['expires_at']:
-            del OTPManager._otp_storage[email]
-            return False
-        
-        # Check attempt limits
-        if otp_data['attempts'] >= max_attempts:
-            del OTPManager._otp_storage[email]
-            return False
-        
-        # Increment attempt counter
-        otp_data['attempts'] += 1
-        
-        # Verify OTP
-        if otp_data['otp'] == otp:
-            # Remove OTP after successful verification
-            del OTPManager._otp_storage[email]
-            return True
-        
+        """
+        DEPRECATED: This method is kept for backward compatibility.
+        Use OTPService.verify_otp() with database session instead.
+        """
+        import warnings
+        warnings.warn(
+            "OTPManager.verify_otp is deprecated. Use OTPService.verify_otp with database session.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        logger.warning(f"Using deprecated OTPManager.verify_otp for {email}")
         return False
     
     @staticmethod
     def clear_otp(email: str):
-        """Clear OTP for an email"""
-        if email in OTPManager._otp_storage:
-            del OTPManager._otp_storage[email]
+        """
+        DEPRECATED: This method is kept for backward compatibility.
+        Use OTPService.clear_otp() with database session instead.
+        """
+        import warnings
+        warnings.warn(
+            "OTPManager.clear_otp is deprecated. Use OTPService.clear_otp with database session.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        logger.warning(f"Using deprecated OTPManager.clear_otp for {email}")
     
     @staticmethod
     def is_otp_valid(email: str) -> bool:
-        """Check if there's a valid OTP for an email"""
-        otp_data = OTPManager._otp_storage.get(email)
-        if not otp_data:
-            return False
-        
-        return datetime.utcnow() <= otp_data['expires_at']
+        """
+        DEPRECATED: This method is kept for backward compatibility.
+        Use OTPService.is_otp_valid() with database session instead.
+        """
+        import warnings
+        warnings.warn(
+            "OTPManager.is_otp_valid is deprecated. Use OTPService.is_otp_valid with database session.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        logger.warning(f"Using deprecated OTPManager.is_otp_valid for {email}")
+        return False
 
 
 class EmailService:

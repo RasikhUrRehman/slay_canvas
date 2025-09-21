@@ -2,13 +2,14 @@
 Complete authentication router with both OAuth and manual registration
 Includes Google OAuth (working) + email/password auth + password reset
 """
-from typing import Optional
-from fastapi import APIRouter, HTTPException, Query, Depends
-from fastapi.responses import RedirectResponse
-import httpx
-from urllib.parse import urlencode
-import secrets
 import logging
+import secrets
+from typing import Optional
+from urllib.parse import urlencode
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import RedirectResponse
 
 from app.core.config import settings
 
@@ -17,14 +18,21 @@ logger = logging.getLogger(__name__)
 # Try to import database components - graceful fallback if not available
 try:
     from sqlalchemy.ext.asyncio import AsyncSession
+
     from app.db.session import get_async_session
-    from app.services.user_service import UserService
     from app.schemas.user import (
-        UserPublic, UserRegistration, UserLogin, 
-        PasswordResetRequest, PasswordResetVerify, AuthResponse, MessageResponse
+        AuthResponse,
+        MessageResponse,
+        PasswordResetRequest,
+        PasswordResetVerify,
+        UserLogin,
+        UserPublic,
+        UserRegistration,
     )
+    from app.services.otp_service import OTPService
+    from app.services.user_service import UserService
     from app.utils.auth import create_access_token, get_current_user_id
-    from app.utils.security import otp_manager, email_service, password_hasher
+    from app.utils.security import email_service, password_hasher
     DATABASE_AVAILABLE = True
 except ImportError as e:
     DATABASE_AVAILABLE = False
@@ -323,7 +331,7 @@ if DATABASE_AVAILABLE:
                 return MessageResponse(message="If this email is registered, you will receive an OTP shortly")
             
             # Generate and send OTP
-            otp = otp_manager.generate_otp(request_data.email)
+            otp = await OTPService.generate_otp(db, request_data.email)
             print(otp)
             email_sent = await email_service.send_otp_email(request_data.email, otp)
             
@@ -356,12 +364,13 @@ if DATABASE_AVAILABLE:
             raise HTTPException(status_code=400, detail=f"Password requirements not met: {', '.join(errors)}")
         
         try:
-            # Verify OTP
-            if not otp_manager.verify_otp(reset_data.email, reset_data.otp):
+            # Verify OTP and get associated email
+            email = await OTPService.verify_otp_and_get_email(db, reset_data.otp)
+            if not email:
                 raise HTTPException(status_code=400, detail="Invalid or expired OTP")
             
-            # Reset password
-            success = await user_service.reset_password(db, reset_data.email, reset_data.new_password)
+            # Reset password using the email from OTP
+            success = await user_service.reset_password(db, email, reset_data.new_password)
             if not success:
                 raise HTTPException(status_code=404, detail="User not found")
             
@@ -436,8 +445,9 @@ async def auth_health():
     # Check database status
     if DATABASE_AVAILABLE:
         try:
-            from app.db.session import async_engine
             from sqlalchemy import text
+
+            from app.db.session import async_engine
             async with async_engine.begin() as conn:
                 await conn.execute(text("SELECT 1"))
             db_status = "✅ Connected"

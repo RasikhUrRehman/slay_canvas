@@ -26,3 +26,9 @@ Thumbs.db
 
 # logs
 *.log
+
+#volumes
+volumes/
+
+#uploads
+uploads/
