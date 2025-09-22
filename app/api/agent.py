@@ -1,3 +1,5 @@
+# TODO: update key for the knowledge base
+
 """
 Agent Router for Knowledge Base Management with Authentication
 Provides endpoints for knowledge base operations and agent communication
@@ -102,6 +104,13 @@ class AgentResponse(BaseModel):
     processing_time: float
     sources: Optional[List[Dict[str, Any]]] = None
     error: Optional[str] = None
+
+
+class SelectiveSearchRequest(BaseModel):
+    message: str
+    knowledge_base_name: str
+    document_titles: List[str]
+    conversation_id: Optional[int] = None
 
 
 @router.post("/knowledge-bases", response_model=Dict[str, str])
@@ -743,9 +752,30 @@ async def chat_agent(
         
         # If no conversation_id provided, create a new conversation
         if conversation_id is None:
+            # Get or create a default workspace for the user
+            from app.services.workspace_service import WorkspaceService
+            from app.schemas.workspace import WorkspaceCreate
+            
+            workspace_service = WorkspaceService()
+            workspaces = await workspace_service.list_workspaces(db, current_user_id)
+            
+            if not workspaces:
+                # Create a default workspace if none exists
+                default_workspace_data = WorkspaceCreate(
+                    name="Default Workspace",
+                    description="Default workspace for conversations"
+                )
+                workspace = await workspace_service.create_workspace(
+                    db, default_workspace_data, current_user_id
+                )
+                project_id = workspace.id
+            else:
+                # Use the first available workspace
+                project_id = workspaces[0].id
+            
             conversation_data = ConversationCreate(
                 conversation_name=f"Chat with {request.knowledge_base_name}",
-                project_id=1  # You can modify this if you have project context
+                project_id=project_id
             )
             conversation = await conversation_service.create_conversation(
                 db=db,
@@ -836,6 +866,203 @@ async def chat_agent(
     except Exception as e:
         logger.error(f"Error in chat agent: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to process chat: {str(e)}")
+
+
+@router.post("/knowledge-bases/{kb_name}/selective-search")
+async def selective_search_agent(
+    kb_name: str,
+    request: SelectiveSearchRequest,
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Chat with the agent using streaming response, searching only within specific documents.
+    Creates a new conversation if conversation_id is not provided.
+    Returns only the agent's answer without thinking steps.
+    """
+    try:
+        conversation_id = request.conversation_id
+        
+        # If no conversation_id provided, create a new conversation
+        if conversation_id is None:
+            # Get or create a default workspace for the user
+            from app.services.workspace_service import WorkspaceService
+            from app.schemas.workspace import WorkspaceCreate
+            
+            workspace_service = WorkspaceService()
+            workspaces = await workspace_service.list_workspaces(db, current_user_id)
+            
+            if not workspaces:
+                # Create a default workspace if none exists
+                default_workspace_data = WorkspaceCreate(
+                    name="Default Workspace",
+                    description="Default workspace for conversations"
+                )
+                workspace = await workspace_service.create_workspace(
+                    db, default_workspace_data, current_user_id
+                )
+                project_id = workspace.id
+            else:
+                # Use the first available workspace
+                project_id = workspaces[0].id
+            
+            conversation_data = ConversationCreate(
+                conversation_name=f"Selective Search in {kb_name}",
+                project_id=project_id
+            )
+            conversation = await conversation_service.create_conversation(
+                db=db,
+                conversation_data=conversation_data,
+                user_id=current_user_id
+            )
+            conversation_id = conversation.id
+        else:
+            # Verify the conversation belongs to the current user
+            conversation = await conversation_service.get_conversation_by_id(db, conversation_id)
+            if not conversation or conversation.user_id != current_user_id:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Save user message to database
+        user_message_data = MessageCreate(
+            content=request.message,
+            role=MessageRole.USER,
+            conversation_id=conversation_id,
+            user_id=current_user_id
+        )
+        user_message = await message_service.create_message(
+            db=db,
+            message_data=user_message_data
+        )
+        
+        # Load conversation history (last 10 messages for context)
+        conversation_with_messages = await conversation_service.get_conversation_by_id(db, conversation_id)
+        conversation_history = []
+        if conversation_with_messages and conversation_with_messages.messages:
+            # Get last 10 messages, excluding the current user message
+            recent_messages = conversation_with_messages.messages[-11:-1] if len(conversation_with_messages.messages) > 1 else []
+            for msg in recent_messages:
+                conversation_history.append({
+                    "role": msg.role.value.upper(),
+                    "content": msg.content
+                })
+        
+        # Get the knowledge base
+        vector_store = _get_knowledge_base(kb_name, current_user_id)
+        
+        # Filter documents by the provided titles
+        all_documents = vector_store.list_all_documents()
+        matching_source_urls = set()
+        
+        for _, metadata in all_documents:
+            doc_title = metadata.get('title', '').strip()
+            original_filename = metadata.get('original_filename', '').strip()
+            
+            # Check if any of the requested titles match this document
+            for requested_title in request.document_titles:
+                requested_title = requested_title.strip()
+                
+                # Match against title or original filename (case-insensitive)
+                if (doc_title and requested_title.lower() in doc_title.lower()) or \
+                   (original_filename and requested_title.lower() in original_filename.lower()) or \
+                   (requested_title.lower() == doc_title.lower()) or \
+                   (requested_title.lower() == original_filename.lower()):
+                    matching_source_urls.add(metadata.get('source_url', ''))
+                    break
+        
+        # Create a custom agent that searches only within selected documents
+        class SelectiveKnowledgeBaseAgent(KnowledgeBaseAgent):
+            def __init__(self, vector_store, selected_source_urls):
+                super().__init__(vector_store)
+                self.selected_source_urls = selected_source_urls
+            
+            async def process_query_stream(self, query, conversation_history=None):
+                """Override to use selective document filtering"""
+                if not self.selected_source_urls:
+                    yield "No documents found matching the specified titles."
+                    return
+                
+                # Build filter expression for selected documents
+                source_url_conditions = [f'source_url == "{url}"' for url in self.selected_source_urls if url]
+                if not source_url_conditions:
+                    yield "No valid source URLs found for filtering."
+                    return
+                
+                filter_expr = " || ".join(source_url_conditions)
+                
+                # Perform filtered similarity search
+                try:
+                    search_results = self.vector_store.similarity_search(
+                        query=query,
+                        k=5,
+                        filter_expr=filter_expr
+                    )
+                    
+                    if not search_results:
+                        yield f"No relevant content found in the specified documents for the query: '{query}'"
+                        return
+                    
+                    # Create context from search results
+                    context_texts = [result["text"] for result in search_results]
+                    context = "\n\n".join(context_texts)
+                    
+                    # Generate streaming response using the parent class method
+                    async for chunk in super().process_query_stream(query, conversation_history):
+                        yield chunk
+                        
+                except Exception as e:
+                    logger.error(f"Error in selective search: {str(e)}")
+                    yield f"Error performing selective search: {str(e)}"
+        
+        # Initialize the selective agent
+        agent = SelectiveKnowledgeBaseAgent(vector_store, matching_source_urls)
+        
+        async def generate_response():
+            """Generate streaming response with only the agent's answer"""
+            try:
+                full_response = ""
+                
+                # Stream the response from the agent
+                async for chunk in agent.process_query_stream(request.message, conversation_history):
+                    if chunk:
+                        full_response += chunk
+                        # Send only the content without any thinking steps or metadata
+                        yield f"data: {chunk}\n\n"
+                
+                # Save agent response to database
+                agent_message_data = MessageCreate(
+                    content=full_response,
+                    role=MessageRole.AGENT,
+                    conversation_id=conversation_id,
+                    user_id=current_user_id
+                )
+                await message_service.create_message(
+                    db=db,
+                    message_data=agent_message_data
+                )
+                
+                # Send conversation_id in the final message for client reference
+                yield f"data: [CONVERSATION_ID:{conversation_id}]\n\n"
+                yield f"data: [DONE]\n\n"
+                
+            except Exception as e:
+                logger.error(f"Error in streaming response: {str(e)}")
+                yield f"data: [ERROR: {str(e)}]\n\n"
+        
+        return StreamingResponse(
+            generate_response(),
+            media_type="text/plain",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Content-Type": "text/plain; charset=utf-8"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in selective search agent: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to process selective search: {str(e)}")
 
 
 @router.get("/health")
