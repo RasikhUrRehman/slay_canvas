@@ -48,6 +48,7 @@ class Workspace(Base):
     # Relationships
     boards = relationship("Board", back_populates="workspace", cascade="all, delete-orphan")
     assets = relationship("Asset", back_populates="workspace", cascade="all, delete-orphan")
+    collections = relationship("Collection", back_populates="workspace", cascade="all, delete-orphan")
     knowledge_bases = relationship("KnowledgeBase", back_populates="workspace", cascade="all, delete-orphan")
     # media_files = relationship("MediaFile", back_populates="workspace", cascade="all, delete-orphan")
 

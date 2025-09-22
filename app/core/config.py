@@ -45,6 +45,12 @@ class Settings:
         self.UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./uploads")
         self.MAX_FILE_SIZE = (os.getenv("MAX_FILE_SIZE", 10000))  # 100MB
         
+        # MinIO Object Storage
+        self.MINIO_HOST = os.getenv("MINIO_HOST", "localhost")
+        self.MINIO_PORT = int(os.getenv("MINIO_PORT", "9000"))
+        self.MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
+        self.MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
+        
         # Email Configuration
         self.SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
         self.SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
