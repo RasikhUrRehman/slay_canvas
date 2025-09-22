@@ -10,6 +10,7 @@ from app.schemas.collection import (
     CollectionRead,
     CollectionWithAssets,
 )
+from app.services.asset_knowledge_service import asset_knowledge_service
 from app.services.assets_service import AssetService
 from app.services.collection_service import CollectionService
 from app.utils.auth import get_current_user_id
@@ -258,3 +259,85 @@ async def list_collection_assets(
 ):
     """List assets in a specific collection."""
     return await list_workspace_assets(workspace_id, asset_type, collection_id, current_user_id, db)
+
+
+# -------------------------
+# Knowledge Base Linking Endpoints
+# -------------------------
+
+@router.post("/assets/{asset_id}/link-to-kb/{knowledge_base_id}")
+async def link_asset_to_knowledge_base(
+    workspace_id: int,
+    asset_id: int,
+    knowledge_base_id: int,
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Link an asset to a knowledge base and create chunks in Milvus."""
+    try:
+        result = await asset_knowledge_service.link_asset_to_knowledge_base(
+            db, asset_id, knowledge_base_id, current_user_id
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to link asset: {str(e)}")
+
+
+@router.post("/collections/{collection_id}/link-to-kb/{knowledge_base_id}")
+async def link_collection_to_knowledge_base(
+    workspace_id: int,
+    collection_id: int,
+    knowledge_base_id: int,
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Link a collection to a knowledge base and create chunks for all assets."""
+    try:
+        result = await asset_knowledge_service.link_collection_to_knowledge_base(
+            db, collection_id, knowledge_base_id, current_user_id
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to link collection: {str(e)}")
+
+
+@router.delete("/assets/{asset_id}/unlink-from-kb")
+async def unlink_asset_from_knowledge_base(
+    workspace_id: int,
+    asset_id: int,
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Unlink an asset from its knowledge base and remove chunks."""
+    try:
+        result = await asset_knowledge_service.unlink_asset_from_knowledge_base(
+            db, asset_id, current_user_id
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to unlink asset: {str(e)}")
+
+
+@router.delete("/collections/{collection_id}/unlink-from-kb")
+async def unlink_collection_from_knowledge_base(
+    workspace_id: int,
+    collection_id: int,
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Unlink a collection from its knowledge base and remove all chunks."""
+    try:
+        result = await asset_knowledge_service.unlink_collection_from_knowledge_base(
+            db, collection_id, current_user_id
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to unlink collection: {str(e)}")

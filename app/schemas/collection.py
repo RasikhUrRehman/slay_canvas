@@ -32,6 +32,7 @@ class CollectionRead(CollectionBase):
     id: int
     workspace_id: int
     user_id: Optional[int] = None
+    knowledge_base_id: Optional[int] = None          # linked knowledge base
     created_at: datetime
     updated_at: datetime
 

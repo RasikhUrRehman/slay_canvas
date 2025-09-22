@@ -50,6 +50,8 @@ class KnowledgeBase(Base):
     user = relationship("User", back_populates="knowledge_bases")
     workspace = relationship("Workspace", back_populates="knowledge_bases")
     conversations = relationship("Conversation", back_populates="knowledge_base", cascade="all, delete-orphan")
+    assets = relationship("Asset", back_populates="knowledge_base", cascade="all, delete-orphan")
+    collections = relationship("Collection", back_populates="knowledge_base", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<KnowledgeBase(id={self.id}, name='{self.name}', collection='{self.collection_name}')>"

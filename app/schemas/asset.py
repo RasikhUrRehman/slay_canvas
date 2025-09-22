@@ -46,6 +46,7 @@ class AssetRead(AssetBase):
     workspace_id: int
     user_id: Optional[int] = None
     collection_id: Optional[int] = None
+    knowledge_base_id: Optional[int] = None          # linked knowledge base
     created_at: datetime
     updated_at: datetime
 

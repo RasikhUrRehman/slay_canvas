@@ -28,11 +28,13 @@ class Collection(Base):
     # Foreign keys
     workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    knowledge_base_id = Column(Integer, ForeignKey("knowledge_bases.id", ondelete="SET NULL"), nullable=True, index=True)  # Optional: collection can be linked to KB
 
     # Relationships
     workspace = relationship("Workspace", back_populates="collections")
     user = relationship("User", back_populates="collections")
     assets = relationship("Asset", back_populates="collection", cascade="all, delete-orphan")
+    knowledge_base = relationship("KnowledgeBase", back_populates="collections")
 
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())

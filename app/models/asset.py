@@ -32,11 +32,13 @@ class Asset(Base):
     workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     collection_id = Column(Integer, ForeignKey("collections.id", ondelete="CASCADE"), nullable=True, index=True)  # Optional: asset can be in collection
+    knowledge_base_id = Column(Integer, ForeignKey("knowledge_bases.id", ondelete="SET NULL"), nullable=True, index=True)  # Optional: asset can be linked to KB
 
     # Relationships
     workspace = relationship("Workspace", back_populates="assets")
     user = relationship("User", back_populates="assets")
     collection = relationship("Collection", back_populates="assets")
+    knowledge_base = relationship("KnowledgeBase", back_populates="assets")
 
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
