@@ -1,6 +1,17 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON, ForeignKey, Text, Table
-from sqlalchemy.sql import func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Table,
+    Text,
+)
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+
 from app.db.session import Base
 
 # Association table (no model class needed)
@@ -37,6 +48,7 @@ class Workspace(Base):
     # Relationships
     boards = relationship("Board", back_populates="workspace", cascade="all, delete-orphan")
     assets = relationship("Asset", back_populates="workspace", cascade="all, delete-orphan")
+    knowledge_bases = relationship("KnowledgeBase", back_populates="workspace", cascade="all, delete-orphan")
     # media_files = relationship("MediaFile", back_populates="workspace", cascade="all, delete-orphan")
 
     # Timestamps

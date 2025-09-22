@@ -1,9 +1,10 @@
 """
 Conversation model for managing chat conversations
 """
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
-from sqlalchemy.sql import func
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+
 from app.db.session import Base
 
 
@@ -17,6 +18,10 @@ class Conversation(Base):
     project_id = Column(Integer, ForeignKey('workspaces.id'), nullable=False, index=True)
     project = relationship("Workspace", backref="conversations")
     
+    # Knowledge base relationship - which chatbot/KB this conversation is using
+    knowledge_base_id = Column(Integer, ForeignKey('knowledge_bases.id'), nullable=True, index=True)
+    knowledge_base = relationship("KnowledgeBase", back_populates="conversations")
+    
     # User who created the conversation
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
     user = relationship("User", backref="conversations")
@@ -29,4 +34,4 @@ class Conversation(Base):
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
 
     def __repr__(self):
-        return f"<Conversation(id={self.id}, name='{self.conversation_name}', project_id={self.project_id})>"
+        return f"<Conversation(id={self.id}, name='{self.conversation_name}', project_id={self.project_id}, kb_id={self.knowledge_base_id})>"

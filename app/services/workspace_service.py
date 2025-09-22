@@ -1,10 +1,11 @@
 from typing import List, Optional
+
+from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import or_
 
-from app.models.workspace import Workspace as WorkspaceModel
 from app.models.user import User
+from app.models.workspace import Workspace as WorkspaceModel
 from app.schemas.workspace import WorkspaceCreate
 
 
@@ -49,6 +50,36 @@ class WorkspaceService:
             )
         )
         return result.scalars().all()
+
+    async def get_workspace_by_name(
+        self, db: AsyncSession, name: str, user_id: int
+    ) -> Optional[WorkspaceModel]:
+        """Get a workspace by name for a specific user."""
+        result = await db.execute(
+            select(WorkspaceModel).where(
+                WorkspaceModel.name == name,
+                or_(
+                    WorkspaceModel.user_id == user_id,
+                    WorkspaceModel.users.any(id=user_id),
+                )
+            )
+        )
+        return result.scalars().first()
+
+    async def get_workspace_by_id(
+        self, db: AsyncSession, workspace_id: int, user_id: int
+    ) -> Optional[WorkspaceModel]:
+        """Get a workspace by ID for a specific user."""
+        result = await db.execute(
+            select(WorkspaceModel).where(
+                WorkspaceModel.id == workspace_id,
+                or_(
+                    WorkspaceModel.user_id == user_id,
+                    WorkspaceModel.users.any(id=user_id),
+                )
+            )
+        )
+        return result.scalars().first()
 
 
 # Legacy function for backward compatibility

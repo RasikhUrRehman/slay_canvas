@@ -43,6 +43,7 @@ class User(Base):
         back_populates="users"
     )
     assets = relationship("Asset", back_populates="user", cascade="all, delete-orphan")
+    knowledge_bases = relationship("KnowledgeBase", back_populates="user", cascade="all, delete-orphan")
     # projects = relationship("Project", back_populates="user")
     # media_files = relationship("MediaFile", back_populates="user")
 
