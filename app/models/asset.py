@@ -1,6 +1,16 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON, ForeignKey, Text
-from sqlalchemy.sql import func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+
 from app.db.session import Base
 
 
@@ -10,18 +20,25 @@ class Asset(Base):
     id = Column(Integer, primary_key=True, index=True)
 
     # Core fields
-    type = Column(String, nullable=False, index=True)  # e.g., "social", "image", "document"
-    url = Column(Text, nullable=True)                  # store link (social, external, etc.)
-    asset_metadata = Column(JSON, default={})                # extra info (title, tags, platform, etc.)
+    type = Column(String, nullable=False, index=True)  # "social", "image", "audio", "document", "text", "wiki", "internet", etc.
+    url = Column(Text, nullable=True)                  # external links (social, wiki, internet)
+    file_path = Column(Text, nullable=True)            # MinIO path for uploaded media files
+    title = Column(String, nullable=True)              # asset title/name
+    content = Column(Text, nullable=True)              # for text assets
+    asset_metadata = Column(JSON, default={})          # extra info (tags, platform, file_size, etc.)
     is_active = Column(Boolean, default=True, nullable=False)
 
-    # Foreign keys (like MongoDB refs)
+    # Foreign keys
     workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    collection_id = Column(Integer, ForeignKey("collections.id", ondelete="CASCADE"), nullable=True, index=True)  # Optional: asset can be in collection
+    knowledge_base_id = Column(Integer, ForeignKey("knowledge_bases.id", ondelete="SET NULL"), nullable=True, index=True)  # Optional: asset can be linked to KB
 
     # Relationships
     workspace = relationship("Workspace", back_populates="assets")
     user = relationship("User", back_populates="assets")
+    collection = relationship("Collection", back_populates="assets")
+    knowledge_base = relationship("KnowledgeBase", back_populates="assets")
 
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -5,17 +5,23 @@ Vector store implementation for RAG-based system using Milvus and custom NLP Clo
 import logging
 import os
 import uuid
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Any, Dict, List, Optional, Tuple
 
-from pymilvus import (
-    Collection, CollectionSchema, DataType, FieldSchema,
-    connections, utility, MilvusClient
-)
 from dotenv import load_dotenv
+from pymilvus import (
+    Collection,
+    CollectionSchema,
+    DataType,
+    FieldSchema,
+    MilvusClient,
+    connections,
+    utility,
+)
+
+from app.core.config import settings
 
 # Import the custom embedding service
 from engine.services.embedding import EmbeddingService
-from app.core.config import settings
 
 # Load environment variables from .env.local
 load_dotenv(".env.local")
