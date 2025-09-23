@@ -148,7 +148,7 @@ class EmbeddingService:
         #     )
 
         self.model = model
-        # self.client = OpenAI()
+        self.client = OpenAI(api_key=self.api_key)
 
     def get_embedding(self, text: str) -> Dict[str, Any]:
         """
@@ -170,7 +170,7 @@ class EmbeddingService:
 
 if __name__ == "__main__":
     # Example usage
-    service = OpenAIEmbeddingService()
+    service = EmbeddingService()
     embedding = service.get_embedding("Today is a sunny day and I will get some ice cream.")
     print(f"Embedding length: {len(embedding['embeddings'])}")
     print(embedding['embeddings'][:10])
