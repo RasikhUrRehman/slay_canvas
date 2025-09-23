@@ -120,6 +120,14 @@ class SelectiveSearchRequest(BaseModel):
     conversation_id: Optional[int] = None
 
 
+class GenerateIdeaRequest(BaseModel):
+    knowledge_base_name: str
+    topic: Optional[str] = None
+    content_type: Optional[str] = "article"  # article, blog_post, summary, etc.
+    max_length: Optional[int] = 1000
+    conversation_id: Optional[int] = None
+
+
 @router.post("/knowledge-bases", response_model=Dict[str, str])
 async def create_knowledge_base(
     request: CreateKnowledgeBaseRequest,
@@ -1113,6 +1121,177 @@ Please provide a comprehensive answer based only on the information provided in 
     except Exception as e:
         logger.error(f"Error in selective search agent: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to process selective search: {str(e)}")
+
+
+@router.post("/knowledge-bases/{kb_name}/generate-idea")
+async def generate_idea(
+    kb_name: str,
+    request: GenerateIdeaRequest,
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate new content ideas based on all documents in the knowledge base.
+    Creates a new conversation if conversation_id is not provided.
+    Returns streaming response with generated content.
+    """
+    try:
+        conversation_id = request.conversation_id
+        
+        # If no conversation_id provided, create a new conversation
+        if conversation_id is None:
+            # Get the knowledge base first to link it to the conversation
+            kb, _ = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
+            
+            # Use the knowledge base's workspace
+            if not kb.workspace_id:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Knowledge base '{kb_name}' is not associated with any workspace"
+                )
+            
+            project_id = kb.workspace_id
+            
+            conversation_data = ConversationCreate(
+                conversation_name=f"Idea Generation from {kb_name}",
+                project_id=project_id,
+                knowledge_base_id=kb.id  # Link conversation to knowledge base
+            )
+            conversation = await conversation_service.create_conversation(
+                db=db,
+                conversation_data=conversation_data,
+                user_id=current_user_id
+            )
+            conversation_id = conversation.id
+        else:
+            # Verify the conversation belongs to the current user
+            conversation = await conversation_service.get_conversation_by_id(db, conversation_id)
+            if not conversation or conversation.user_id != current_user_id:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Get the knowledge base from database
+        kb, vector_store = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
+        
+        # Retrieve all documents from the knowledge base
+        all_documents = vector_store.list_all_documents()
+        
+        if not all_documents:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"No documents found in knowledge base '{kb_name}'"
+            )
+        
+        # Prepare content for idea generation
+        document_summaries = []
+        unique_sources = set()
+        
+        for text, metadata in all_documents:
+            source_url = metadata.get('source_url', '')
+            title = metadata.get('title', 'Untitled')
+            content_type = metadata.get('content_type', 'unknown')
+            
+            # Avoid duplicate sources and create summaries
+            if source_url not in unique_sources:
+                unique_sources.add(source_url)
+                # Take first 500 characters as summary
+                summary = text[:500] + "..." if len(text) > 500 else text
+                document_summaries.append({
+                    'title': title,
+                    'content_type': content_type,
+                    'summary': summary,
+                    'source_url': source_url
+                })
+        
+        # Create the idea generation prompt
+        topic_context = f" focusing on the topic: {request.topic}" if request.topic else ""
+        content_type_instruction = f"Format the output as a {request.content_type}."
+        
+        idea_prompt = f"""Based on the following documents from the knowledge base, generate new creative content ideas{topic_context}.
+
+Available Documents:
+"""
+        
+        for i, doc in enumerate(document_summaries[:20], 1):  # Limit to 20 documents to avoid token limits
+            idea_prompt += f"\n{i}. Title: {doc['title']}\n   Type: {doc['content_type']}\n   Summary: {doc['summary']}\n"
+        
+        idea_prompt += f"""
+
+Task: Generate innovative and creative content based on the themes, concepts, and information from these documents. {content_type_instruction}
+
+Requirements:
+- Create original content that synthesizes information from multiple sources
+- Identify patterns, connections, and insights across the documents
+- Suggest new perspectives or applications of the existing knowledge
+- Keep the response under {request.max_length} words
+- Be creative and think outside the box while staying grounded in the source material
+
+Generate your response now:"""
+        
+        # Save the generation request as a user message
+        user_message_data = MessageCreate(
+            content=f"Generate idea for {request.content_type}" + (f" about {request.topic}" if request.topic else ""),
+            role=MessageRole.USER,
+            conversation_id=conversation_id,
+            user_id=current_user_id
+        )
+        user_message = await message_service.create_message(
+            db=db,
+            message_data=user_message_data
+        )
+        
+        # Initialize the agent for idea generation
+        agent = KnowledgeBaseAgent(vector_store)
+        
+        async def generate_response():
+            """Generate streaming response with the generated idea"""
+            try:
+                full_response = ""
+                
+                # Use the agent's LLM client directly for idea generation
+                async for chunk in agent.llm_client.stream_completion(
+                    messages=[{"role": "user", "content": idea_prompt}],
+                    max_tokens=request.max_length,
+                    temperature=0.7  # Higher temperature for more creativity
+                ):
+                    if chunk:
+                        full_response += chunk
+                        yield f"data: {chunk}\n\n"
+                
+                # Save agent response to database
+                agent_message_data = MessageCreate(
+                    content=full_response,
+                    role=MessageRole.AGENT,
+                    conversation_id=conversation_id,
+                    user_id=current_user_id
+                )
+                await message_service.create_message(
+                    db=db,
+                    message_data=agent_message_data
+                )
+                
+                # Send conversation_id in the final message for client reference
+                yield f"data: [CONVERSATION_ID:{conversation_id}]\n\n"
+                yield f"data: [DONE]\n\n"
+                
+            except Exception as e:
+                logger.error(f"Error in idea generation streaming response: {str(e)}")
+                yield f"data: [ERROR: {str(e)}]\n\n"
+        
+        return StreamingResponse(
+            generate_response(),
+            media_type="text/plain",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Content-Type": "text/plain; charset=utf-8"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in generate idea: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate idea: {str(e)}")
 
 
 @router.get("/health")
