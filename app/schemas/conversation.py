@@ -2,15 +2,12 @@
 Pydantic schemas for Conversation and Message models
 """
 from datetime import datetime
-from enum import Enum
 from typing import List, Optional
 
 from pydantic import BaseModel
 
-
-class MessageRole(str, Enum):
-    USER = "user"
-    AGENT = "agent"
+# Import MessageRole from the model to ensure consistency
+from app.models.message import MessageRole
 
 
 # Message schemas
