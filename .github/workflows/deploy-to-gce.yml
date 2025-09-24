@@ -30,24 +30,41 @@ jobs:
           ssh -v -o StrictHostKeyChecking=no slay-canvas-deploy@${{ secrets.GCE_VM_IP }} whoami
         continue-on-error: true
 
-      - name: Deploy to GCE
+      - name: Deploy to GCE (docker compose)
         run: |
           ssh -o StrictHostKeyChecking=no slay-canvas-deploy@${{ secrets.GCE_VM_IP }} << 'EOF'
           set -x
           cd /home/kjmannn17/slay_canvas
 
-          # Update repo
+          # Update repo to latest main
           sudo git fetch origin main
           sudo git reset --hard origin/main
 
-          source .venv/bin/activate
-
+          # Write .env from GitHub Actions var
           sudo sh -c 'echo "${{ vars.ENV_FILE_PROD }}" > /home/kjmannn17/slay_canvas/.env'
 
-          # Install requirements into venv
-          /home/kjmannn17/slay_canvas/.venv/bin/pip install --upgrade pip
-          /home/kjmannn17/slay_canvas/.venv/bin/pip install -r requirements.txt
+          # If you used a systemd service before, stop/disable it so it doesn't conflict
+          sudo systemctl stop slay_canvas.service || true
+          sudo systemctl disable slay_canvas.service || true
 
-          # Restart service
-          sudo systemctl restart slay_canvas
+          # Ensure docker daemon is running
+          sudo systemctl start docker || true
+
+          # Move into project (just to be explicit)
+          cd /home/kjmannn17/slay_canvas
+
+          # Use docker compose plugin if available, otherwise fallback to docker-compose
+          if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+            # Pull (best-effort), then build & run in detached mode
+            sudo docker compose --env-file .env pull || true
+            sudo docker compose --env-file .env up -d --build --remove-orphans
+          else
+            # Fallback to docker-compose binary
+            sudo docker-compose pull || true
+            sudo docker-compose up -d --build --remove-orphans
+          fi
+
+          # Optional: cleanup dangling images (safe)
+          sudo docker image prune -f || true
+
           EOF
