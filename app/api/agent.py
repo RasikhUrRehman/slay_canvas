@@ -128,6 +128,17 @@ class GenerateIdeaRequest(BaseModel):
     conversation_id: Optional[int] = None
 
 
+class ConversationWithMessages(BaseModel):
+    id: int
+    conversation_name: str
+    project_id: int
+    knowledge_base_id: Optional[int]
+    user_id: int
+    created_at: str
+    updated_at: str
+    messages: List[Dict[str, Any]]
+
+
 @router.post("/knowledge-bases", response_model=Dict[str, str])
 async def create_knowledge_base(
     request: CreateKnowledgeBaseRequest,
@@ -771,6 +782,54 @@ async def query_agent(
     except Exception as e:
         logger.error(f"Error querying agent: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to query agent: {str(e)}")
+
+
+@router.get("/conversations/{conversation_id}", response_model=ConversationWithMessages)
+async def get_conversation_with_messages(
+    conversation_id: int,
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get a conversation with all its messages for the authenticated user."""
+    try:
+        # Get conversation with messages
+        conversation = await conversation_service.get_conversation_by_id(db, conversation_id)
+        
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Verify the conversation belongs to the current user
+        if conversation.user_id != current_user_id:
+            raise HTTPException(status_code=403, detail="Access denied to this conversation")
+        
+        # Format messages
+        messages = []
+        if conversation.messages:
+            for msg in conversation.messages:
+                messages.append({
+                    "id": msg.id,
+                    "content": msg.content,
+                    "role": msg.role.value,
+                    "created_at": msg.created_at.isoformat(),
+                    "user_id": msg.user_id
+                })
+        
+        return ConversationWithMessages(
+            id=conversation.id,
+            conversation_name=conversation.conversation_name,
+            project_id=conversation.project_id,
+            knowledge_base_id=conversation.knowledge_base_id,
+            user_id=conversation.user_id,
+            created_at=conversation.created_at.isoformat(),
+            updated_at=conversation.updated_at.isoformat(),
+            messages=messages
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting conversation {conversation_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get conversation: {str(e)}")
 
 
 @router.post("/chat-agent")
