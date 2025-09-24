@@ -141,10 +141,12 @@ async def create_knowledge_base(
                 status_code=404, 
                 detail=f"Workspace '{request.project_name}' not found. Please create the workspace first."
             )
+
+        name = f"chat_{current_user_id}_{int(time.time())}"
         
         # Create knowledge base data for service
         kb_create = KnowledgeBaseCreate(
-            name=request.name,
+            name=name,
             description=request.description,
             chunk_size=request.chunk_size,
             chunk_overlap=request.chunk_overlap,

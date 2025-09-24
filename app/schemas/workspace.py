@@ -1,7 +1,13 @@
-from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
 from datetime import datetime
-from app.schemas.user import UserPublic  # ✅ So we can return user info for collaborators
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel
+
+# Import the actual schemas to avoid forward reference issues
+from app.schemas.asset import AssetRead
+from app.schemas.collection import CollectionRead
+from app.schemas.knowledge_base import KnowledgeBasePublic
+from app.schemas.user import UserPublic
 
 
 # ✅ Shared properties
@@ -57,6 +63,14 @@ class WorkspacePublic(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ✅ Comprehensive workspace with all related data
+class WorkspaceDetailed(WorkspaceInDBBase):
+    collaborators: List[UserPublic] = []
+    knowledge_bases: List[KnowledgeBasePublic] = []
+    assets: List[AssetRead] = []
+    collections: List[CollectionRead] = []
 
 
 # ✅ Response message (useful for success/failure messages)

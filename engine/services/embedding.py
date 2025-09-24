@@ -142,13 +142,13 @@ class EmbeddingService:
             model (str): Model ID to use for embeddings.
         """
         self.api_key = api_key or os.getenv("OPENAI_API_KEY", "test")
-        # if not self.api_key:
-        #     raise ValueError(
-        #         "API key not provided. Set OPENAI_API_KEY environment variable or pass it explicitly."
-        #     )
+        if not self.api_key:
+            raise ValueError(
+                "API key not provided. Set OPENAI_API_KEY environment variable or pass it explicitly."
+            )
 
         self.model = model
-        # self.client = OpenAI()
+        self.client = OpenAI()
 
     def get_embedding(self, text: str) -> Dict[str, Any]:
         """

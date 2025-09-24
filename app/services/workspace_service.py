@@ -3,10 +3,12 @@ from typing import List, Optional
 from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 
+from app.models.knowledge_base import KnowledgeBase
 from app.models.user import User
 from app.models.workspace import Workspace as WorkspaceModel
-from app.schemas.workspace import WorkspaceCreate
+from app.schemas.workspace import WorkspaceCreate, WorkspaceUpdate
 
 
 class WorkspaceService:
@@ -80,6 +82,85 @@ class WorkspaceService:
             )
         )
         return result.scalars().first()
+
+    async def get_workspace_detailed(
+        self, db: AsyncSession, workspace_id: int, user_id: int
+    ) -> Optional[WorkspaceModel]:
+        """Get a workspace with all related data (knowledge bases, assets, collections)."""
+        result = await db.execute(
+            select(WorkspaceModel)
+            .options(
+                selectinload(WorkspaceModel.users),
+                selectinload(WorkspaceModel.knowledge_bases).selectinload(KnowledgeBase.conversations),
+                selectinload(WorkspaceModel.assets),
+                selectinload(WorkspaceModel.collections),
+            )
+            .where(
+                WorkspaceModel.id == workspace_id,
+                or_(
+                    WorkspaceModel.user_id == user_id,
+                    WorkspaceModel.users.any(id=user_id),
+                )
+            )
+        )
+        return result.scalars().first()
+
+    async def update_workspace(
+        self, db: AsyncSession, workspace_id: int, user_id: int, request: WorkspaceUpdate
+    ) -> Optional[WorkspaceModel]:
+        """Update a workspace. Only the owner can update."""
+        workspace = await db.execute(
+            select(WorkspaceModel).where(
+                WorkspaceModel.id == workspace_id,
+                WorkspaceModel.user_id == user_id  # Only owner can update
+            )
+        )
+        workspace = workspace.scalars().first()
+        
+        if not workspace:
+            return None
+
+        # Update fields if provided
+        if request.name is not None:
+            workspace.name = request.name
+        if request.description is not None:
+            workspace.description = request.description
+        if request.settings is not None:
+            workspace.settings = request.settings
+        if request.is_public is not None:
+            workspace.is_public = request.is_public
+        
+        # Update collaborators if provided
+        if request.collaborator_ids is not None:
+            collaborators = []
+            for uid in request.collaborator_ids:
+                user = await db.get(User, uid)
+                if user:
+                    collaborators.append(user)
+            workspace.users = collaborators
+
+        await db.commit()
+        await db.refresh(workspace)
+        return workspace
+
+    async def delete_workspace(
+        self, db: AsyncSession, workspace_id: int, user_id: int
+    ) -> bool:
+        """Delete a workspace. Only the owner can delete."""
+        workspace = await db.execute(
+            select(WorkspaceModel).where(
+                WorkspaceModel.id == workspace_id,
+                WorkspaceModel.user_id == user_id  # Only owner can delete
+            )
+        )
+        workspace = workspace.scalars().first()
+        
+        if not workspace:
+            return False
+
+        await db.delete(workspace)
+        await db.commit()
+        return True
 
 
 # Legacy function for backward compatibility
