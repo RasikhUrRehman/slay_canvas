@@ -855,7 +855,7 @@ async def chat_agent(
                 full_response = ""
                 
                 # Stream the response from the agent
-                async for chunk in agent.process_query_stream(request.message, conversation_history):
+                for chunk in agent.process_query_stream(request.message, conversation_history):
                     if chunk:
                         full_response += chunk
                         # Send only the content without any thinking steps or metadata
@@ -1082,7 +1082,7 @@ Please provide a comprehensive answer based only on the information provided in 
                 full_response = ""
                 
                 # Stream the response from the agent
-                async for chunk in agent.process_query_stream(request.message, conversation_history):
+                for chunk in agent.process_query_stream(request.message, conversation_history):
                     if chunk:
                         full_response += chunk
                         # Send only the content without any thinking steps or metadata
