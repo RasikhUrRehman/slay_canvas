@@ -73,6 +73,29 @@ async def delete_collection(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a collection and all its assets."""
+    # Get collection first to check if it's linked to a knowledge base
+    collection = await collection_service.get_collection(db, workspace_id, collection_id, include_assets=True)
+    if not collection:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    
+    # If collection is linked to a knowledge base, unlink it first to remove chunks
+    # EXACTLY like agent.py delete_document logic
+    if collection.knowledge_base_id:
+        try:
+            result = await asset_knowledge_service.unlink_collection_from_knowledge_base(
+                db, collection_id, current_user_id
+            )
+            chunks_deleted = result.get('total_chunks_deleted', 0)
+            if chunks_deleted > 0:
+                print(f"Documents deleted successfully, total_chunks_deleted: {chunks_deleted}")
+            else:
+                print("No documents found in knowledge base")
+        except Exception as e:
+            # EXACTLY like agent.py error handling
+            print(f"Error deleting documents: {str(e)}")
+            # Continue with collection deletion even if KB cleanup fails
+    
+    # Delete collection (soft delete)
     success = await collection_service.delete_collection(db, workspace_id, collection_id)
     if not success:
         raise HTTPException(status_code=404, detail="Collection not found")
@@ -196,10 +219,27 @@ async def delete_asset(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete an asset."""
-    # Get asset first to check if it has a file to delete from MinIO
+    # Get asset first to check if it has a file to delete from Cloudinary
     asset = await asset_service.get_asset(db, workspace_id, asset_id)
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
+    
+    # If asset is linked to a knowledge base, remove its chunks from Milvus first
+    # EXACTLY like agent.py delete_document logic
+    if asset.knowledge_base_id:
+        try:
+            result = await asset_knowledge_service.unlink_asset_from_knowledge_base(
+                db, asset_id, current_user_id
+            )
+            chunks_deleted = result.get('chunks_deleted', 0)
+            if chunks_deleted > 0:
+                print(f"Document deleted successfully, chunks_deleted: {chunks_deleted}")
+            else:
+                print("Document not found in knowledge base")
+        except Exception as e:
+            # EXACTLY like agent.py error handling
+            print(f"Error deleting document: {str(e)}")
+            # Continue with asset deletion even if KB cleanup fails
     
     # Delete from database
     success = await asset_service.delete_asset(db, workspace_id, asset_id)

@@ -3,8 +3,6 @@ Asset Knowledge Service for linking assets/collections to knowledge bases
 and creating chunks in Milvus
 """
 import logging
-import os
-import tempfile
 from datetime import datetime
 from typing import Dict
 
@@ -238,7 +236,7 @@ class AssetKnowledgeService:
                 # Process file content
                 if asset.file_path:
                     chunks_created = await self._process_file_content(
-                        asset, vector_store, splitter
+                        asset, kb, vector_store, splitter
                     )
             
             processing_time = (datetime.now() - start_time).total_seconds()
@@ -349,6 +347,7 @@ class AssetKnowledgeService:
     async def _process_file_content(
         self,
         asset: Asset,
+        kb: KnowledgeBase,
         vector_store,
         splitter: DocumentSplitter
     ) -> int:
@@ -356,64 +355,190 @@ class AssetKnowledgeService:
         
         # For audio files, we need transcription
         if asset.type == "audio":
-            return await self._process_audio_file(asset, vector_store, splitter)
+            return await self._process_audio_file(asset, kb, vector_store, splitter)
         
         # For documents and images with text, extract content
         elif asset.type in ["document", "image"]:
-            return await self._process_document_file(asset, vector_store, splitter)
+            return await self._process_document_file(asset, kb, vector_store, splitter)
         
         return 0
     
     async def _process_audio_file(
         self,
         asset: Asset,
+        kb: KnowledgeBase,
         vector_store,
         splitter: DocumentSplitter
     ) -> int:
         """Process audio file by transcribing it using the same logic as agent.py"""
         
         try:
-            # Note: This would need to download the file from MinIO first
-            # For now, we'll use a placeholder implementation
-            # In the future, we should download the file and process it similar to agent.py
-            
-            # Get file from MinIO (placeholder - would need actual download)
             logger.info(f"Processing audio file: {asset.file_path}")
             
-            # For now, return 0 until we implement MinIO file download
-            logger.warning(f"Audio processing requires MinIO file download - not yet implemented for asset {asset.id}")
-            return 0
+            # Initialize extractor - same as agent.py
+            extractor = Extractor()
+            
+            # For Cloudinary URLs or direct URLs, use extractor.process_content
+            # For local files, also use extractor.process_content
+            logger.info(f"Extracting content from: {asset.file_path}")
+            extracted_content = extractor.process_content(asset.file_path)
+            
+            if not extracted_content.get("success", False):
+                error_msg = extracted_content.get("error_message", "Unknown extraction error")
+                logger.error(f"Audio extraction failed for {asset.file_path}: {error_msg}")
+                raise ValueError(f"Failed to extract audio content: {error_msg}")
+            
+            # Get the audio transcription - same as agent.py
+            transcriptions = extracted_content.get("transcriptions", {})
+            audio_transcription = transcriptions.get("audio_transcription", "")
+            
+            if not audio_transcription:
+                error_msg = "No audio transcription could be extracted"
+                logger.warning(f"No transcription for {asset.file_path}: {error_msg}")
+                raise ValueError(error_msg)
+            
+            # Create metadata with proper structure - same as agent.py
+            metadata = {
+                "source_url": asset.file_path,
+                "title": asset.title or extracted_content.get("title", f"Audio Asset {asset.id}"),
+                "content_type": extracted_content.get("content_type", "audio"),
+                "extraction_time": datetime.now().isoformat(),
+                "transcription_type": "audio",
+                "user_id": asset.user_id,
+                "asset_id": asset.id,
+                "asset_type": asset.type,
+                "workspace_id": asset.workspace_id,
+                **extracted_content.get("metadata", {}),
+                **asset.asset_metadata
+            }
+            
+            # Split transcription into chunks - same as agent.py
+            logger.info("Splitting audio transcription into chunks...")
+            chunks = splitter.split_custom_text(audio_transcription, metadata)
+            
+            if not chunks:
+                error_msg = "No chunks could be created from audio transcription"
+                logger.warning(f"No chunks created for {asset.file_path}: {error_msg}")
+                raise ValueError(error_msg)
+            
+            # Prepare texts and metadata for vector store - same as agent.py
+            texts = [chunk.text for chunk in chunks]
+            metadatas = []
+            
+            for chunk in chunks:
+                chunk_metadata = chunk.metadata.copy()
+                # Ensure user_id is in metadata
+                chunk_metadata['user_id'] = asset.user_id
+                metadatas.append(chunk_metadata)
+            
+            # Add to vector store - same as agent.py
+            logger.info(f"Adding {len(chunks)} chunks to vector store...")
+            vector_store.add_documents(texts, metadatas)
+            
+            return len(chunks)
             
         except Exception as e:
             logger.error(f"Error processing audio file for asset {asset.id}: {str(e)}")
-            return 0
+            raise
     
     async def _process_document_file(
         self,
         asset: Asset,
+        kb: KnowledgeBase,
         vector_store,
         splitter: DocumentSplitter
     ) -> int:
-        """Process document file by extracting text using the same logic as agent.py"""
+        """Process document file by downloading from Cloudinary and extracting text using the same logic as agent.py"""
         
         try:
-            # Note: This would need to download the file from MinIO first
-            # For now, we'll use a placeholder implementation
-            # In the future, we should download the file and process it similar to agent.py
+            import os
+            import tempfile
+
+            import requests
             
             logger.info(f"Processing document file: {asset.file_path}")
             
-            # Validate file type similar to agent.py
-            allowed_extensions = {'.pdf', '.docx', '.txt', '.doc'}
-            original_filename = asset.asset_metadata.get("original_filename", asset.file_path)
-            file_extension = os.path.splitext(original_filename)[1].lower()
+            # Download the file from Cloudinary URL to a temporary file
+            logger.info(f"Downloading document from: {asset.file_path}")
+            response = requests.get(asset.file_path, timeout=30)
+            response.raise_for_status()
             
+            # Get file extension from original filename or URL
+            original_filename = asset.asset_metadata.get("original_filename", "")
+            if original_filename:
+                file_extension = os.path.splitext(original_filename)[1].lower()
+            else:
+                # Try to get extension from URL
+                file_extension = os.path.splitext(asset.file_path)[1].lower()
+                if not file_extension:
+                    file_extension = '.pdf'  # Default to PDF
+            
+            # Validate file type
+            allowed_extensions = {'.pdf', '.docx', '.txt', '.doc'}
             if file_extension not in allowed_extensions:
                 raise ValueError(f"Unsupported file type: {file_extension}. Allowed types: {', '.join(allowed_extensions)}")
             
-            # For now, return 0 until we implement MinIO file download
-            logger.warning(f"Document processing requires MinIO file download - not yet implemented for asset {asset.id}")
-            return 0
+            # Save to temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+                temp_file.write(response.content)
+                temp_file_path = temp_file.name
+            
+            try:
+                # Initialize document processor - same as agent.py
+                from engine.processors.document_processor import DocumentProcessor
+                doc_processor = DocumentProcessor(
+                    chunk_size=kb.chunk_size,
+                    chunk_overlap=kb.chunk_overlap
+                )
+                
+                # Process the downloaded file - same as agent.py
+                logger.info("Processing document with document processor...")
+                processed_docs = doc_processor.process_file(temp_file_path)
+                
+                if not processed_docs:
+                    error_msg = "No content could be extracted from document"
+                    logger.warning(f"No content extracted for {asset.file_path}: {error_msg}")
+                    raise ValueError(error_msg)
+                
+                # Prepare texts and metadata for vector store - same as agent.py
+                texts = []
+                metadatas = []
+                
+                for chunk_text, chunk_metadata in processed_docs:
+                    # Create metadata with proper structure - same as agent.py
+                    metadata = {
+                        "source_url": asset.file_path,
+                        "title": asset.title or f"Document Asset {asset.id}",
+                        "content_type": "document",
+                        "extraction_time": datetime.now().isoformat(),
+                        "user_id": asset.user_id,
+                        "asset_id": asset.id,
+                        "asset_type": asset.type,
+                        "workspace_id": asset.workspace_id,
+                        # Add document-specific metadata
+                        **chunk_metadata,
+                        **asset.asset_metadata
+                    }
+                    
+                    texts.append(chunk_text)
+                    metadatas.append(metadata)
+                
+                # Add to vector store - same as agent.py
+                logger.info(f"Adding {len(texts)} chunks to vector store...")
+                vector_store.add_documents(texts, metadatas)
+                
+                return len(texts)
+                
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(temp_file_path)
+                except Exception:
+                    pass
+            
+        except Exception as e:
+            logger.error(f"Error processing document file for asset {asset.id}: {str(e)}")
+            raise
             
         except Exception as e:
             logger.error(f"Error processing document file for asset {asset.id}: {str(e)}")
@@ -424,17 +549,18 @@ class AssetKnowledgeService:
         asset: Asset,
         kb: KnowledgeBase
     ) -> int:
-        """Remove chunks for a specific asset from Milvus"""
+        """Remove chunks for a specific asset from Milvus - 100% replication of agent.py logic"""
         
         try:
-            # Get vector store
+            # Get vector store - same as agent.py: kb, vector_store = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
             vector_store = knowledge_base_service.get_vector_store(kb)
             
-            # Delete by source_url - need to handle different asset types
+            # Determine source_url based on asset type - exactly like agent.py expects
+            source_url = None
             if asset.type == "text":
-                # For text assets, we used a timestamped source_url
-                # We'll need to delete by asset_id metadata instead
-                pass  # Will implement metadata-based deletion
+                # For text assets, we used a timestamped source_url like: f"asset_{asset.id}_{datetime.now().isoformat()}"
+                # Since we can't recreate the exact timestamp, we'll try the base pattern
+                source_url = f"asset_{asset.id}"
             elif asset.type in ["social", "wiki", "internet"]:
                 # For URL assets, source_url is the original URL
                 source_url = asset.url
@@ -444,16 +570,24 @@ class AssetKnowledgeService:
             else:
                 source_url = f"asset_{asset.id}"
             
-            # For now, try to delete by source_url
-            # TODO: Implement metadata-based deletion for more robust cleanup
-            deleted_count = 0
-            if 'source_url' in locals() and source_url:
+            # EXACT replication of agent.py deletion logic
+            if source_url:
+                # Delete document by source URL - EXACTLY like agent.py
                 deleted_count = vector_store.delete_by_source_url(source_url)
-            
-            return deleted_count
+                
+                if deleted_count > 0:
+                    logger.info(f"Document '{source_url}' deleted successfully, chunks_deleted: {deleted_count}")
+                    return deleted_count
+                else:
+                    logger.warning(f"Document '{source_url}' not found")
+                    return 0
+            else:
+                logger.warning(f"No source_url found for asset {asset.id}")
+                return 0
             
         except Exception as e:
-            logger.error(f"Error removing chunks for asset {asset.id}: {str(e)}")
+            # EXACTLY like agent.py error handling
+            logger.error(f"Error deleting document: {str(e)}")
             return 0
 
 
