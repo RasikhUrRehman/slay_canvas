@@ -1,15 +1,19 @@
 """
 Service layer for conversation and message operations
 """
-from typing import Optional, List
+from typing import List, Optional
+
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc
 from sqlalchemy.orm import selectinload
 
 from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
 from app.schemas.conversation import (
-    ConversationCreate, ConversationUpdate, MessageCreate, MessageUpdate
+    ConversationCreate,
+    ConversationUpdate,
+    MessageCreate,
+    MessageUpdate,
 )
 
 
@@ -50,6 +54,7 @@ class ConversationService:
         conversation = Conversation(
             conversation_name=conversation_data.conversation_name,
             project_id=conversation_data.project_id,
+            knowledge_base_id=conversation_data.knowledge_base_id,
             user_id=user_id
         )
         db.add(conversation)
