@@ -11,9 +11,21 @@ from typing import Dict, List, Any, Optional, Callable
 from datetime import datetime
 from dataclasses import dataclass
 
+from openai import OpenAI
 from engine.services.openrouter import OpenRouterClient
 from engine.rag.rag_system import RAGSystem
 from app.core.config import settings
+from engine.llm.prompts import (
+    SYSTEM_PROMPT, 
+    CREATIVE_GENERATOR_PROMPT, 
+    SUMMARIZATION_PROMPT, 
+    DECISION_MAKER_PROMPT,
+    get_idea_generation_prompt,
+    get_summarization_prompt,
+    get_decision_prompt,
+    get_final_response_prompt,
+    get_simple_response_prompt
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,26 +70,23 @@ class KnowledgeBaseAgent:
         
         Args:
             vector_store: Existing VectorStore instance to use (optional)
-            model: OpenRouter model to use (defaults to settings)
-            api_key: OpenRouter API key (defaults to settings)
+            model: OpenAI model to use (defaults to gpt-4o-mini)
+            api_key: OpenAI API key (defaults to settings)
             rag_collection_name: Name for the RAG collection
             max_tokens: Maximum tokens for LLM responses
             temperature: Temperature for LLM generation
         """
-        self.model = model or settings.OPENROUTER_MODEL
-        self.api_key = api_key or settings.OPENROUTER_API_KEY
+        self.model = model or "gpt-4o-mini"
+        self.api_key = api_key or settings.OPENAI_API_KEY
         self.max_tokens = max_tokens
         self.temperature = temperature
         
-        # Initialize OpenRouter client
+        # Initialize OpenAI client
         if not self.api_key:
-            raise ValueError("OpenRouter API key is required")
+            raise ValueError("OpenAI API key is required")
             
-        self.llm_client = OpenRouterClient(
-            model=self.model,
-            api_key=self.api_key
-        )
-        logger.info(f"✓ OpenRouter client initialized with model: {self.model}")
+        self.llm_client = OpenAI(api_key=self.api_key)
+        logger.info(f"✓ OpenAI client initialized with model: {self.model}")
         
         # Initialize RAG system for knowledge base
         if vector_store:
@@ -107,38 +116,6 @@ class KnowledgeBaseAgent:
             "summarize_knowledge_base": self._summarize_knowledge_base_tool,
             "generate_idea": self._generate_idea_tool
         }
-        
-        # System prompt for the agent
-        self.system_prompt = """You are an intelligent AI assistant with access to knowledge base tools.
-
-        Your capabilities:
-        1. You can search a knowledge base using the search_knowledge_base tool
-        2. You can summarize all content in the knowledge base using the summarize_knowledge_base tool
-        3. You can generate creative ideas based on all documents using the generate_idea tool
-        4. You should decide when to use these tools based on the user's question
-        5. You can generate appropriate search queries automatically
-        6. You provide comprehensive answers combining your knowledge with tool results
-
-        Tool Usage Guidelines:
-        - Use summarize_knowledge_base when the user asks for an overview, summary, or wants to know what's in the knowledge base
-        - Use search_knowledge_base when the user asks about specific information that might be in documents
-        - Use generate_idea when the user wants creative content, new ideas, or synthesis based on all available documents
-        - Generate focused search queries that capture the key concepts from the user's question
-        - Always explain your reasoning for using or not using tools
-        - If tool results are found, incorporate them into your response and cite sources
-        - If no relevant results are found, rely on your general knowledge but mention the tool attempt
-
-        Available Tools:
-        - search_knowledge_base(query: str) -> searches the knowledge base with the given query
-        - summarize_knowledge_base() -> provides an overview of all content in the knowledge base
-        - generate_idea(topic: str, content_type: str) -> generates creative ideas based on all documents
-
-        When you decide to use a tool, format your response as:
-        REASONING: [Explain why you're using the tool]
-        TOOL_CALL: [tool_name]("parameters if needed")
-        RESPONSE: [Your final response incorporating any tool results]
-
-        If you don't need to use tools, just provide a direct response."""
 
     def _search_knowledge_base_tool(self, query: str) -> ToolResult:
         """
@@ -257,42 +234,26 @@ class KnowledgeBaseAgent:
                     })
             
             # Create the idea generation prompt
-            topic_context = f" focusing on the topic: {topic}" if topic else ""
-            content_type_instruction = f"Format the output as a {content_type}."
-            
-            idea_prompt = f"""Based on the following documents from the knowledge base, generate new creative content ideas{topic_context}.
-
-Available Documents:
-"""
-            
-            for i, doc in enumerate(document_summaries, 1):
-                idea_prompt += f"\n{i}. Title: {doc['title']}\n   Type: {doc['content_type']}\n   Summary: {doc['summary']}\n"
-            
-            idea_prompt += f"""
-
-Task: Generate innovative and creative content based on the themes, concepts, and information from these documents. {content_type_instruction}
-
-Requirements:
-- Create original content that synthesizes information from multiple sources
-- Identify patterns, connections, and insights across the documents
-- Suggest new perspectives or applications of the existing knowledge
-- Keep the response under 800 words
-- Be creative and think outside the box while staying grounded in the source material
-
-Generate your response now:"""
+            idea_prompt = get_idea_generation_prompt(document_summaries, topic, content_type)
             
             # Generate the idea using the LLM
-            response = self.llm_client.chat(
-                messages=idea_prompt,
+            response = self.llm_client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": CREATIVE_GENERATOR_PROMPT},
+                    {"role": "user", "content": idea_prompt}
+                ],
                 max_tokens=1000,
-                system_prompt="You are a creative content generator that synthesizes information from multiple sources."
+                temperature=self.temperature
             )
             
-            if response and response.strip():
+            response_text = response.choices[0].message.content
+            
+            if response_text and response_text.strip():
                 return ToolResult(
                     success=True,
                     data={
-                        "generated_idea": response.strip(),
+                        "generated_idea": response_text.strip(),
                         "topic": topic,
                         "content_type": content_type,
                         "sources_used": len(document_summaries),
@@ -443,23 +404,17 @@ Generate your response now:"""
                         content_for_summary += f"Chunks: {doc_info['chunk_count']}\n"
                         content_for_summary += f"Sample content:\n{doc_info['sample_content']}\n\n"
                     
-                    summary_prompt = f"""Analyze the following knowledge base contents and provide a comprehensive summary of what information is available:
+                    summary_prompt = get_summarization_prompt(content_for_summary)
 
-{content_for_summary}
-
-Please provide:
-1. An overview of the types of documents and content available
-2. Key topics and themes covered
-3. The scope and breadth of information
-4. Any notable patterns or categories of content
-
-Summary:"""
-
-                    summary_text = self.llm_client.chat(
-                        messages=summary_prompt,
+                    summary_text = self.llm_client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": SUMMARIZATION_PROMPT},
+                            {"role": "user", "content": summary_prompt}
+                        ],
                         max_tokens=800,
-                        system_prompt="You are a helpful assistant that summarizes knowledge base contents."
-                    )
+                        temperature=self.temperature
+                    ).choices[0].message.content
                     
                 except Exception as e:
                     logger.warning(f"Failed to generate LLM summary: {e}")
@@ -503,37 +458,18 @@ Summary:"""
             Tuple of (should_use_kb, tool_name, search_query)
         """
         # Use LLM to decide if knowledge base should be used and which tool
-        decision_prompt = f"""Analyze this user question and determine if it would benefit from using the knowledge base and which tool to use.
-
-User Question: "{user_prompt}"
-
-Available tools:
-1. search_knowledge_base - Search for specific information in documents
-2. summarize_knowledge_base - Get an overview of all content in the knowledge base
-3. generate_idea - Generate creative ideas based on all documents in the knowledge base
-
-Consider:
-1. Does this question ask for a summary or overview of all content? (use summarize_knowledge_base)
-2. Does this question ask for specific information that might be in documents? (use search_knowledge_base)
-3. Does this question ask for creative ideas, content generation, or synthesis based on available content? (use generate_idea)
-4. Is this a general question that doesn't need the knowledge base? (use neither)
-
-Keywords that indicate summarization: "summarize", "summary", "overview", "what do you have", "what's in your knowledge base", "content available", "all documents"
-
-Keywords that indicate idea generation: "create idea", "generate idea", "new idea", "creative content", "based on content", "synthesize", "combine information", "new perspective", "innovative", "brainstorm", "inspiration"
-
-Respond in this exact format:
-DECISION: [YES or NO]
-TOOL: [search_knowledge_base, summarize_knowledge_base, generate_idea, or N/A]
-QUERY: [If using search tool, provide a focused search query; if using generate_idea, write the topic or "general"; otherwise write "N/A"]
-REASONING: [Brief explanation of your decision]"""
+        decision_prompt = get_decision_prompt(user_prompt)
 
         try:
-            response = self.llm_client.chat(
-                messages=decision_prompt,
+            response = self.llm_client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": DECISION_MAKER_PROMPT},
+                    {"role": "user", "content": decision_prompt}
+                ],
                 max_tokens=200,
-                system_prompt="You are a helpful assistant that decides when to search knowledge bases."
-            )
+                temperature=self.temperature
+            ).choices[0].message.content
             
             # Parse the response
             decision_match = re.search(r'DECISION:\s*(YES|NO)', response, re.IGNORECASE)
@@ -621,8 +557,10 @@ REASONING: [Brief explanation of your decision]"""
                         
                         knowledge_context = "\n\n".join(context_parts)
                         reasoning += f" Found {len(search_result.data)} relevant documents."
+                        logger.info(f"Found {len(search_result.data)} relevant documents for streaming query")
                     else:
                         reasoning += " No relevant documents found in knowledge base."
+                        logger.info("No relevant documents found in knowledge base for streaming query")
                         
                 elif tool_name == "summarize_knowledge_base":
                     reasoning = "Summarizing all content in the knowledge base"
@@ -645,8 +583,10 @@ REASONING: [Brief explanation of your decision]"""
                             knowledge_context += f"- {doc['source']} ({doc['content_type']}): {doc['chunk_count']} chunks\n"
                         
                         reasoning += f" Analyzed {summary_data['total_chunks']} chunks from {summary_data['total_sources']} sources."
+                        logger.info(f"Analyzed {summary_data['total_chunks']} chunks from {summary_data['total_sources']} sources for streaming")
                     else:
                         reasoning += " Failed to summarize knowledge base."
+                        logger.warning("Failed to summarize knowledge base for streaming")
                         
                 elif tool_name == "generate_idea":
                     reasoning = f"Generating creative ideas based on all knowledge base content"
@@ -666,6 +606,7 @@ REASONING: [Brief explanation of your decision]"""
                         total_docs = idea_result.data.get('total_documents', 0)
                         
                         reasoning += f" Generated content based on {sources_used} unique sources from {total_docs} total documents."
+                        logger.info(f"Generated content based on {sources_used} unique sources from {total_docs} total documents for streaming")
                         
                         # Stream the generated idea directly
                         for chunk in generated_idea:
@@ -674,14 +615,19 @@ REASONING: [Brief explanation of your decision]"""
                         return  # Exit early since we've already streamed the response
                     else:
                         reasoning += " Failed to generate ideas from knowledge base."
+                        logger.warning("Failed to generate ideas from knowledge base for streaming")
             else:
                 reasoning = "No knowledge base tools needed for this query."
+                logger.info("No knowledge base tools needed for streaming query")
+            
+            # Log the reasoning for internal tracking
+            logger.info(f"Streaming processing reasoning: {reasoning}")
             
             # Build messages for streaming
             messages = []
             
             # Add system prompt
-            system_prompt = self.system_prompt
+            system_prompt = SYSTEM_PROMPT
             if knowledge_context:
                 system_prompt += f"\n\nKnowledge Base Context:\n{knowledge_context}"
             
@@ -695,16 +641,22 @@ REASONING: [Brief explanation of your decision]"""
             messages.append({"role": "user", "content": user_prompt})
             
             # Get streaming response from LLM
-            for chunk in self.llm_client.chat_stream(
+            stream = self.llm_client.chat.completions.create(
+                model=self.model,
                 messages=messages,
-                max_tokens=self.max_tokens
-            ):
-                yield chunk
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+                stream=True
+            )
+            
+            for chunk in stream:
+                if chunk.choices[0].delta.content is not None:
+                    yield chunk.choices[0].delta.content
                 
         except Exception as e:
             error_msg = f"Failed to process streaming query: {e}"
             logger.error(error_msg)
-            yield f"Error: {error_msg}"
+            yield "I apologize, but I encountered an error while processing your request."
 
     def process_query(self, user_prompt: str) -> AgentResponse:
         """
@@ -750,8 +702,10 @@ REASONING: [Brief explanation of your decision]"""
                         
                         knowledge_context = "\n\n".join(context_parts)
                         reasoning += f" Found {len(search_result.data)} relevant documents."
+                        logger.info(f"Found {len(search_result.data)} relevant documents for query")
                     else:
                         reasoning += " No relevant documents found in knowledge base."
+                        logger.info("No relevant documents found in knowledge base")
                         
                 elif tool_name == "summarize_knowledge_base":
                     reasoning = "Summarizing all content in the knowledge base"
@@ -774,38 +728,52 @@ REASONING: [Brief explanation of your decision]"""
                             knowledge_context += f"- {doc['source']} ({doc['content_type']}): {doc['chunk_count']} chunks\n"
                         
                         reasoning += f" Analyzed {summary_data['total_chunks']} chunks from {summary_data['total_sources']} sources."
+                        logger.info(f"Analyzed {summary_data['total_chunks']} chunks from {summary_data['total_sources']} sources")
                     else:
                         reasoning += " Failed to summarize knowledge base."
+                        logger.warning("Failed to summarize knowledge base")
+                        
+                elif tool_name == "generate_idea":
+                    reasoning = "Generating creative ideas based on knowledge base content"
+                    logger.info(reasoning)
+                    
+                    # Extract topic and content type from user prompt if available
+                    topic = ""
+                    content_type = "article"
+                    
+                    # Generate ideas
+                    idea_result = self._generate_idea_tool(topic, content_type)
+                    tools_used.append("generate_idea")
+                    
+                    if idea_result.success and idea_result.data:
+                        knowledge_context = idea_result.data["generated_idea"]
+                        reasoning += f" Generated ideas based on {idea_result.data['sources_used']} sources."
+                        logger.info(f"Generated ideas based on {idea_result.data['sources_used']} sources")
+                    else:
+                        reasoning += " Failed to generate ideas from knowledge base."
+                        logger.warning("Failed to generate ideas from knowledge base")
             else:
                 reasoning = "No knowledge base tools needed for this query."
+                logger.info("No knowledge base tools needed for this query")
+            
+            # Log the reasoning for internal tracking
+            logger.info(f"Processing reasoning: {reasoning}")
             
             # Generate final response using LLM
             if knowledge_context:
-                final_prompt = f"""Based on the following context from the knowledge base and the user's question, provide a comprehensive and accurate answer.
-
-Context from Knowledge Base:
-{knowledge_context}
-
-User Question: {user_prompt}
-
-Instructions:
-- Use the context to provide accurate information
-- If the context doesn't fully answer the question, supplement with your general knowledge
-- Cite when you're using information from the knowledge base
-- Be clear about what information comes from the knowledge base vs. your general knowledge
-
-Answer:"""
+                final_prompt = get_final_response_prompt(user_prompt, knowledge_context)
             else:
-                final_prompt = f"""User Question: {user_prompt}
-
-Please provide a helpful and accurate response based on your knowledge."""
+                final_prompt = get_simple_response_prompt(user_prompt)
 
             # Get LLM response
-            answer = self.llm_client.chat(
-                messages=final_prompt,
+            answer = self.llm_client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT}
+                ] + final_prompt,
                 max_tokens=self.max_tokens,
-                system_prompt=self.system_prompt
-            )
+                temperature=self.temperature
+            ).choices[0].message.content
             
             # Calculate confidence (simple heuristic)
             confidence = 0.8 if sources else 0.6
@@ -813,6 +781,9 @@ Please provide a helpful and accurate response based on your knowledge."""
                 confidence = 0.9
             
             processing_time = (datetime.now() - start_time).total_seconds()
+            
+            # Log completion details
+            logger.info(f"Query processed successfully in {processing_time:.2f}s. Tools used: {tools_used}. Confidence: {confidence}")
             
             return AgentResponse(
                 answer=answer,
@@ -830,7 +801,7 @@ Please provide a helpful and accurate response based on your knowledge."""
             processing_time = (datetime.now() - start_time).total_seconds()
             
             return AgentResponse(
-                answer=f"I apologize, but I encountered an error while processing your request: {error_msg}",
+                answer=f"I apologize, but I encountered an error while processing your request.",
                 tools_used=tools_used,
                 reasoning=reasoning,
                 confidence=0.0,

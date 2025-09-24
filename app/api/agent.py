@@ -6,6 +6,7 @@ Provides endpoints for knowledge base operations and agent communication
 with JWT authentication and user-specific data isolation.
 """
 
+import asyncio
 import io
 import logging
 import os
@@ -105,8 +106,6 @@ class ChatAgentRequest(BaseModel):
 
 class AgentResponse(BaseModel):
     answer: str
-    tools_used: List[str]
-    reasoning: str
     confidence: float
     processing_time: float
     sources: Optional[List[Dict[str, Any]]] = None
@@ -919,6 +918,10 @@ async def chat_agent(
                         full_response += chunk
                         # Send only the content without any thinking steps or metadata
                         yield f"data: {chunk}\n\n"
+                        # Add 0.1 second delay for streaming effect
+                        await asyncio.sleep(0.1)
+                        # Add 0.1 second delay for streaming effect
+                        await asyncio.sleep(0.1)
                 
                 # Save agent response to database
                 agent_message_data = MessageCreate(
@@ -1317,6 +1320,8 @@ Generate your response now:"""
                     if chunk:
                         full_response += chunk
                         yield f"data: {chunk}\n\n"
+                        # Add 0.1 second delay for streaming effect
+                        await asyncio.sleep(0.1)
                 
                 # Save agent response to database
                 agent_message_data = MessageCreate(
