@@ -9,8 +9,8 @@ import enum
 
 
 class MessageRole(enum.Enum):
-    USER = "user"
-    AGENT = "agent"
+    user = "user"
+    agent = "agent"
 
 
 class Message(Base):
@@ -20,7 +20,7 @@ class Message(Base):
     
     # Message content
     content = Column(Text, nullable=False)
-    role = Column(Enum(MessageRole), nullable=False, index=True)
+    role = Column(Enum(MessageRole, name='messagerole'), nullable=False, index=True)
     
     # Conversation relationship
     conversation_id = Column(Integer, ForeignKey('conversations.id'), nullable=False, index=True)
