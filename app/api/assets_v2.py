@@ -14,7 +14,7 @@ from app.services.asset_knowledge_service import asset_knowledge_service
 from app.services.assets_service import AssetService
 from app.services.collection_service import CollectionService
 from app.utils.auth import get_current_user_id
-from app.utils.storage import delete_file_from_minio, upload_file_to_minio
+from app.utils.storage import delete_file_from_cloudinary, upload_file_to_cloudinary
 
 router = APIRouter(prefix="/workspaces/{workspace_id}", tags=["assets"])
 asset_service = AssetService()
@@ -125,15 +125,14 @@ async def upload_file_asset(
     current_user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload a file asset and store in MinIO."""
+    """Upload a file asset and store in Cloudinary."""
     if asset_type not in ["image", "audio", "document"]:
         raise HTTPException(status_code=400, detail="Invalid asset type for file upload")
     
     try:
-        # Upload file to MinIO
-        file_path = await upload_file_to_minio(
+        # Upload file to Cloudinary
+        file_path = await upload_file_to_cloudinary(
             file=file,
-            bucket="assets",
             folder=f"workspace_{workspace_id}/{asset_type}s"
         )
         
@@ -156,7 +155,7 @@ async def upload_file_asset(
     except Exception as e:
         # If asset creation fails, clean up uploaded file
         if 'file_path' in locals():
-            await delete_file_from_minio("assets", file_path)
+            await delete_file_from_cloudinary(file_path)
         raise HTTPException(status_code=500, detail=f"Failed to upload asset: {str(e)}")
 
 
@@ -207,13 +206,13 @@ async def delete_asset(
     if not success:
         raise HTTPException(status_code=404, detail="Asset not found")
     
-    # Delete file from MinIO if it exists
+    # Delete file from Cloudinary if it exists
     if asset.file_path:
         try:
-            await delete_file_from_minio("assets", asset.file_path)
+            await delete_file_from_cloudinary(asset.file_path)
         except Exception as e:
             # Log the error but don't fail the request
-            print(f"Warning: Failed to delete file from MinIO: {e}")
+            print(f"Warning: Failed to delete file from Cloudinary: {e}")
     
     return None
 

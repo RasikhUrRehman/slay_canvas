@@ -45,11 +45,16 @@ class Settings:
         self.UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./uploads")
         self.MAX_FILE_SIZE = (os.getenv("MAX_FILE_SIZE", 10000))  # 100MB
         
-        # MinIO Object Storage
+        # MinIO Object Storage (deprecated - migrating to Cloudinary)
         self.MINIO_HOST = os.getenv("MINIO_HOST", "localhost")
         self.MINIO_PORT = int(os.getenv("MINIO_PORT", "9000"))
         self.MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
         self.MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
+        
+        # Cloudinary Object Storage
+        self.CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME", "")
+        self.CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY", "")
+        self.CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET", "")
         
         # Email Configuration
         self.SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
