@@ -513,7 +513,7 @@ class KnowledgeBaseAgent:
         
         return False, "", ""
 
-    def process_query_stream(self, user_prompt: str, conversation_history: List[Dict[str, str]] = None):
+    async def process_query_stream(self, user_prompt: str, conversation_history: List[Dict[str, str]] = None):
         """
         Process a user query with streaming response, deciding whether to use tools.
         

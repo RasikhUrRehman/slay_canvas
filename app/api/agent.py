@@ -755,7 +755,7 @@ async def query_agent(
         async def generate_response():
             try:
                 # Get streaming response from agent
-                for chunk in agent.process_query_stream(request.message, []):
+                async for chunk in agent.process_query_stream(request.message, []):
                     yield f"data: {chunk}\n\n"
                 
                 # Send end of stream marker
@@ -913,7 +913,7 @@ async def chat_agent(
                 full_response = ""
                 
                 # Stream the response from the agent
-                for chunk in agent.process_query_stream(request.message, conversation_history):
+                async for chunk in agent.process_query_stream(request.message, conversation_history):
                     if chunk:
                         full_response += chunk
                         # Send only the content without any thinking steps or metadata
@@ -1123,9 +1123,17 @@ Please provide a comprehensive answer based only on the information provided in 
                         })
                         
                         # Stream response from LLM
-                        for chunk in llm_client.chat_stream(messages):
-                            if chunk:
-                                yield chunk
+                        stream = llm_client.chat.completions.create(
+                            model=self.base_agent.model,
+                            messages=messages,
+                            max_tokens=self.base_agent.max_tokens,
+                            temperature=self.base_agent.temperature,
+                            stream=True
+                        )
+                        
+                        for chunk in stream:
+                            if chunk.choices[0].delta.content is not None:
+                                yield chunk.choices[0].delta.content
                                 
                     except Exception as llm_error:
                         logger.error(f"Error generating LLM response: {str(llm_error)}")
@@ -1144,11 +1152,13 @@ Please provide a comprehensive answer based only on the information provided in 
                 full_response = ""
                 
                 # Stream the response from the agent
-                for chunk in agent.process_query_stream(request.message, conversation_history):
+                async for chunk in agent.process_query_stream(request.message, conversation_history):
                     if chunk:
                         full_response += chunk
                         # Send only the content without any thinking steps or metadata
                         yield f"data: {chunk}\n\n"
+                        # Add 0.1 second delay for streaming effect
+                        await asyncio.sleep(0.1)
                 
                 # Save agent response to database
                 agent_message_data = MessageCreate(
