@@ -8,6 +8,7 @@ from app.schemas.asset import AssetCreate, AssetCreateWithFile, AssetRead
 from app.schemas.collection import (
     CollectionCreate,
     CollectionRead,
+    CollectionUpdate,
     CollectionWithAssets,
 )
 from app.services.asset_knowledge_service import asset_knowledge_service
@@ -63,6 +64,43 @@ async def get_collection(
     if not collection:
         raise HTTPException(status_code=404, detail="Collection not found")
     return collection
+
+
+@router.put("/collections/{collection_id}", response_model=CollectionRead)
+async def update_collection(
+    workspace_id: int,
+    collection_id: int,
+    request: CollectionUpdate,
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update/rename a collection."""
+    try:
+        collection = await collection_service.update_collection(db, workspace_id, collection_id, request)
+        if not collection:
+            raise HTTPException(status_code=404, detail="Collection not found")
+        return collection
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.patch("/collections/{collection_id}/rename", response_model=CollectionRead)
+async def rename_collection(
+    workspace_id: int,
+    collection_id: int,
+    new_name: str,
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Rename a collection (convenience endpoint)."""
+    try:
+        update_data = CollectionUpdate(name=new_name)
+        collection = await collection_service.update_collection(db, workspace_id, collection_id, update_data)
+        if not collection:
+            raise HTTPException(status_code=404, detail="Collection not found")
+        return collection
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @router.delete("/collections/{collection_id}", status_code=status.HTTP_204_NO_CONTENT)
