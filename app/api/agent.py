@@ -1039,21 +1039,28 @@ async def selective_search_agent(
         all_documents = vector_store.list_all_documents()
         matching_source_urls = set()
         
-        for _, metadata in all_documents:
-            doc_title = metadata.get('title', '').strip()
-            original_filename = metadata.get('original_filename', '').strip()
-            
-            # Check if any of the requested titles match this document
-            for requested_title in request.document_titles:
-                requested_title = requested_title.strip()
+        # If no document titles are provided or the list is empty, use all documents
+        if not request.document_titles:
+            # Add all document source URLs
+            for _, metadata in all_documents:
+                matching_source_urls.add(metadata.get('source_url', ''))
+        else:
+            # Filter by specific document titles
+            for _, metadata in all_documents:
+                doc_title = metadata.get('title', '').strip()
+                original_filename = metadata.get('original_filename', '').strip()
                 
-                # Match against title or original filename (case-insensitive)
-                if (doc_title and requested_title.lower() in doc_title.lower()) or \
-                   (original_filename and requested_title.lower() in original_filename.lower()) or \
-                   (requested_title.lower() == doc_title.lower()) or \
-                   (requested_title.lower() == original_filename.lower()):
-                    matching_source_urls.add(metadata.get('source_url', ''))
-                    break
+                # Check if any of the requested titles match this document
+                for requested_title in request.document_titles:
+                    requested_title = requested_title.strip()
+                    
+                    # Match against title or original filename (case-insensitive)
+                    if (doc_title and requested_title.lower() in doc_title.lower()) or \
+                       (original_filename and requested_title.lower() in original_filename.lower()) or \
+                       (requested_title.lower() == doc_title.lower()) or \
+                       (requested_title.lower() == original_filename.lower()):
+                        matching_source_urls.add(metadata.get('source_url', ''))
+                        break
         
         # Create a custom agent that searches only within selected documents
         class SelectiveKnowledgeBaseAgent:
@@ -1067,7 +1074,7 @@ async def selective_search_agent(
             async def process_query_stream(self, query, conversation_history=None):
                 """Process query with selective document filtering"""
                 if not self.selected_source_urls:
-                    yield "No documents found matching the specified titles."
+                    yield "No documents found in the knowledge base."
                     return
                 
                 # Convert set to list for the vector store method
