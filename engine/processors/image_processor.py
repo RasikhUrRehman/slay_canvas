@@ -3,10 +3,11 @@ import requests
 import json
 import os
 from typing import Dict, Any, Optional
-from app.core.config import settings
+#from app.core.config import settings
 import io
 from PIL import Image
 from dotenv import load_dotenv
+import google.generativeai as genai
 
 load_dotenv()
 
@@ -43,18 +44,52 @@ class ImageProcessor:
         print(f"✅ Compressed image in memory ({size_kb:.2f} KB)")
         return buffer
 
-    def image_to_text(self, image_buffer: io.BytesIO):
-        url = "https://api.api-ninjas.com/v1/imagetotext"
-        headers = {"X-Api-Key": self.api_key}
 
-        files = {"image": ("compressed.jpg", image_buffer, "image/jpeg")}
-        response = requests.post(url, headers=headers, files=files)
+        # Function to transcribe text from an image file object
+    
 
-        if response.status_code != 200:
-            print("Error:", response.status_code, response.text)
-            return None
+        
+    # def image_to_text(self, image_buffer: io.BytesIO):
+    #     url = "https://api.api-ninjas.com/v1/imagetotext"
+    #     headers = {"X-Api-Key": self.api_key}
 
-        return response.json()
+    #     files = {"image": ("compressed.jpg", image_buffer, "image/jpeg")}
+    #     response = requests.post(url, headers=headers, files=files)
+
+    #     if response.status_code != 200:
+    #         print("Error:", response.status_code, response.text)
+    #         return None
+
+    #     return response.json()
+
+    def image_to_text(self, image_file, model_name="gemini-2.0-flash"):
+        """
+        Transcribe text from an image using Google's Gemini model.
+        
+        Args:
+            image_file: Image file object or BytesIO buffer
+            model_name: Gemini model to use for transcription
+            
+        Returns:
+            str: Transcribed text from the image
+        """
+        # Initialize the model
+        model = genai.GenerativeModel(model_name)
+        
+        # Load the image from the file object
+        image = Image.open(image_file)
+        
+        # Prompt to extract/transcribe text from the image
+        prompt = "Transcribe all visible content and text in this image accurately."
+        
+        # Generate content with text prompt and image
+        response = model.generate_content([prompt, image])
+    
+        # Print the transcribed text
+        transcribed_text = response.text
+        print("Transcribed Text:\n", transcribed_text)
+        
+        return transcribed_text
 
     def extract_text(self, ocr_result):
         """
@@ -69,11 +104,10 @@ class ImageProcessor:
 
     def process_image_from_file(self, image_path: str, target_kb=190):
         """
-        Full pipeline: compress image, send to API, extract text.
+        Full pipeline: compress image, send to Gemini API, extract text.
         """
         compressed_buffer = self.compress_image(image_path, target_kb=target_kb)
-        ocr_result = self.image_to_text(compressed_buffer)
-        extracted_text = self.extract_text(ocr_result)
+        extracted_text = self.image_to_text(compressed_buffer)
         return extracted_text
 
     def compress_image_from_pil(self, img: Image.Image, target_kb=190):
@@ -104,7 +138,7 @@ class ImageProcessor:
     
     def process_image_from_url(self, image_url: str, target_kb=190):
         """
-        Full pipeline: fetch image from URL, compress, send to API, extract text.
+        Full pipeline: fetch image from URL, compress, send to Gemini API, extract text.
         """
         response = requests.get(image_url, stream=True)
         if response.status_code != 200:
@@ -113,8 +147,8 @@ class ImageProcessor:
 
         img = Image.open(io.BytesIO(response.content))
         compressed_buffer = self.compress_image_from_pil(img, target_kb=target_kb)
-        ocr_result = self.image_to_text(compressed_buffer)
-        return self.extract_text(ocr_result)
+        extracted_text = self.image_to_text(compressed_buffer)
+        return extracted_text
 
     def process(self, source: str, target_kb=190):
         parsed = urlparse(source)
@@ -130,7 +164,7 @@ class ImageProcessor:
 if __name__ == "__main__":
     YOUR_API_KEY = settings.API_NINJAS_KEY
     #IMAGE_FILE = "https://instagram.fmfg1-1.fna.fbcdn.net/v/t51.2885-15/549468712_18484415512076000_6849235617603501235_n.jpg?stp=dst-jpg_e35_p1080x1080_sh0.08_tt6&_nc_ht=instagram.fmfg1-1.fna.fbcdn.net&_nc_cat=1&_nc_oc=Q6cZ2QEUdk8VEj5bBIO1lbtB_FtfNhQsiBCQUVH-yYeFXfZpKhZfoG2RISrqm6mSYFLeVfc&_nc_ohc=hbYB3UVdyakQ7kNvwH4p4Cm&_nc_gid=YK3mgRuowGdPvNk-Jlbukw&edm=AE-LrgUBAAAA&ccb=7-5&oh=00_AfZ0pKelOZdYK81083KUEO5DM0I_ZbfRvO-kE6CwHqyxYQ&oe=68CF844B&_nc_sid=8353fa"
-    IMAGE_FILE = "downloads\pic2.png"
+    IMAGE_FILE = "uploads/pic2.png"
     image_processor = ImageProcessor(YOUR_API_KEY)
 
     res = image_processor.process(IMAGE_FILE, target_kb=190)

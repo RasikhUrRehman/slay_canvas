@@ -129,20 +129,57 @@
 # with open("video.mp4", "wb") as f:
 #     f.write(data)
 
-from TikTokApi import TikTokApi
+# from TikTokApi import TikTokApi
 
-# Initialize API
-with TikTokApi() as api:
-    # Replace with the TikTok video URL
-    url = "https://www.tiktok.com/@yasirali.1919/video/7537649701600922887?is_from_webapp=1&sender_device=pc"
+# # Initialize API
+# with TikTokApi() as api:
+#     # Replace with the TikTok video URL
+#     url = "https://www.tiktok.com/@yasirali.1919/video/7537649701600922887?is_from_webapp=1&sender_device=pc"
     
-    video = api.video(url=url)
+#     video = api.video(url=url)
 
-    # Get direct video URL
-    video_url = video.bytes()
-    print("Video file (bytes):", len(video_url))
+#     # Get direct video URL
+#     video_url = video.bytes()
+#     print("Video file (bytes):", len(video_url))
 
-    # Or get video data (contains image URLs, etc.)
-    info = video.info()
-    print("Cover image:", info['itemInfo']['itemStruct']['video']['cover'])
-    print("Video play URL:", info['itemInfo']['itemStruct']['video']['playAddr'])
+#     # Or get video data (contains image URLs, etc.)
+#     info = video.info()
+#     print("Cover image:", info['itemInfo']['itemStruct']['video']['cover'])
+#     print("Video play URL:", info['itemInfo']['itemStruct']['video']['playAddr'])
+
+
+import os
+from PIL import Image
+import google.generativeai as genai
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Configure the API key (set via environment variable)
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+# Function to transcribe text from an image file object
+def transcribe_image(image_file, model_name="gemini-2.0-flash"):
+    # Initialize the model
+    model = genai.GenerativeModel(model_name)
+    
+    # Load the image from the file object
+    image = Image.open(image_file)
+    
+    # Prompt to extract/transcribe text from the image
+    prompt = "Transcribe all visible content and text in this image accurately."
+    
+    # Generate content with text prompt and image
+    response = model.generate_content([prompt, image])
+  
+    # Print the transcribed text
+    transcribed_text = response.text
+    print("Transcribed Text:\n", transcribed_text)
+    
+    return transcribed_text
+
+# Example usage
+if __name__ == "__main__":
+    # Example with a file opened in binary mode
+    with open("Uploads/youyube.png", "rb") as image_file:
+        result = transcribe_image(image_file)
