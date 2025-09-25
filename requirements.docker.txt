@@ -39,6 +39,7 @@ websockets>=11.0.0
 # File Storage & Upload
 aiofiles>=23.0.0
 minio>=7.2.0
+cloudinary
 
 # Web Scraping & Data Extraction
 requests>=2.31.0

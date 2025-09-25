@@ -6,6 +6,7 @@ Provides endpoints for knowledge base operations and agent communication
 with JWT authentication and user-specific data isolation.
 """
 
+import asyncio
 import io
 import logging
 import os
@@ -115,8 +116,6 @@ class ChatAgentRequest(BaseModel):
 
 class AgentResponse(BaseModel):
     answer: str
-    tools_used: List[str]
-    reasoning: str
     confidence: float
     processing_time: float
     sources: Optional[List[Dict[str, Any]]] = None
@@ -786,7 +785,7 @@ async def query_agent(
         async def generate_response():
             try:
                 # Get streaming response from agent
-                for chunk in agent.process_query_stream(request.message, []):
+                async for chunk in agent.process_query_stream(request.message, []):
                     yield f"data: {chunk}\n\n"
                 
                 # Send end of stream marker
@@ -944,11 +943,15 @@ async def chat_agent(
                 full_response = ""
                 
                 # Stream the response from the agent
-                for chunk in agent.process_query_stream(request.message, conversation_history):
+                async for chunk in agent.process_query_stream(request.message, conversation_history):
                     if chunk:
                         full_response += chunk
                         # Send only the content without any thinking steps or metadata
                         yield f"data: {chunk}\n\n"
+                        # Add 0.1 second delay for streaming effect
+                        await asyncio.sleep(0.1)
+                        # Add 0.1 second delay for streaming effect
+                        await asyncio.sleep(0.1)
                 
                 # Save agent response to database
                 agent_message_data = MessageCreate(
@@ -1066,21 +1069,28 @@ async def selective_search_agent(
         all_documents = vector_store.list_all_documents()
         matching_source_urls = set()
         
-        for _, metadata in all_documents:
-            doc_title = metadata.get('title', '').strip()
-            original_filename = metadata.get('original_filename', '').strip()
-            
-            # Check if any of the requested titles match this document
-            for requested_title in request.document_titles:
-                requested_title = requested_title.strip()
+        # If no document titles are provided or the list is empty, use all documents
+        if not request.document_titles:
+            # Add all document source URLs
+            for _, metadata in all_documents:
+                matching_source_urls.add(metadata.get('source_url', ''))
+        else:
+            # Filter by specific document titles
+            for _, metadata in all_documents:
+                doc_title = metadata.get('title', '').strip()
+                original_filename = metadata.get('original_filename', '').strip()
                 
-                # Match against title or original filename (case-insensitive)
-                if (doc_title and requested_title.lower() in doc_title.lower()) or \
-                   (original_filename and requested_title.lower() in original_filename.lower()) or \
-                   (requested_title.lower() == doc_title.lower()) or \
-                   (requested_title.lower() == original_filename.lower()):
-                    matching_source_urls.add(metadata.get('source_url', ''))
-                    break
+                # Check if any of the requested titles match this document
+                for requested_title in request.document_titles:
+                    requested_title = requested_title.strip()
+                    
+                    # Match against title or original filename (case-insensitive)
+                    if (doc_title and requested_title.lower() in doc_title.lower()) or \
+                       (original_filename and requested_title.lower() in original_filename.lower()) or \
+                       (requested_title.lower() == doc_title.lower()) or \
+                       (requested_title.lower() == original_filename.lower()):
+                        matching_source_urls.add(metadata.get('source_url', ''))
+                        break
         
         # Create a custom agent that searches only within selected documents
         class SelectiveKnowledgeBaseAgent:
@@ -1094,7 +1104,7 @@ async def selective_search_agent(
             async def process_query_stream(self, query, conversation_history=None):
                 """Process query with selective document filtering"""
                 if not self.selected_source_urls:
-                    yield "No documents found matching the specified titles."
+                    yield "No documents found in the knowledge base."
                     return
                 
                 # Convert set to list for the vector store method
@@ -1150,9 +1160,17 @@ Please provide a comprehensive answer based only on the information provided in 
                         })
                         
                         # Stream response from LLM
-                        for chunk in llm_client.chat_stream(messages):
-                            if chunk:
-                                yield chunk
+                        stream = llm_client.chat.completions.create(
+                            model=self.base_agent.model,
+                            messages=messages,
+                            max_tokens=self.base_agent.max_tokens,
+                            temperature=self.base_agent.temperature,
+                            stream=True
+                        )
+                        
+                        for chunk in stream:
+                            if chunk.choices[0].delta.content is not None:
+                                yield chunk.choices[0].delta.content
                                 
                     except Exception as llm_error:
                         logger.error(f"Error generating LLM response: {str(llm_error)}")
@@ -1171,11 +1189,13 @@ Please provide a comprehensive answer based only on the information provided in 
                 full_response = ""
                 
                 # Stream the response from the agent
-                for chunk in agent.process_query_stream(request.message, conversation_history):
+                async for chunk in agent.process_query_stream(request.message, conversation_history):
                     if chunk:
                         full_response += chunk
                         # Send only the content without any thinking steps or metadata
                         yield f"data: {chunk}\n\n"
+                        # Add 0.1 second delay for streaming effect
+                        await asyncio.sleep(0.1)
                 
                 # Save agent response to database
                 agent_message_data = MessageCreate(
@@ -1347,6 +1367,8 @@ Generate your response now:"""
                     if chunk:
                         full_response += chunk
                         yield f"data: {chunk}\n\n"
+                        # Add 0.1 second delay for streaming effect
+                        await asyncio.sleep(0.1)
                 
                 # Save agent response to database
                 agent_message_data = MessageCreate(
