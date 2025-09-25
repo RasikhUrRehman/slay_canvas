@@ -91,14 +91,20 @@
 #     return workspaces
 
 from typing import List
-from fastapi import APIRouter, Depends, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.schemas.workspace import WorkspaceCreate, Workspace
-from app.utils.auth import get_current_user_id
+from app.schemas.workspace import (
+    MessageResponse,
+    Workspace,
+    WorkspaceCreate,
+    WorkspaceUpdate,
+)
 from app.services.workspace_service import WorkspaceService
+from app.utils.auth import get_current_user_id
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 security = HTTPBearer()
@@ -110,6 +116,7 @@ async def create_workspace(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db),
 ):
+    """Create a new workspace for the current user."""
     user_id: int = get_current_user_id(credentials)
     service = WorkspaceService()
     return await service.create_workspace(db, request, user_id)
@@ -120,6 +127,122 @@ async def list_workspaces(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db),
 ):
+    """List all workspaces belonging to or shared with the current user."""
     user_id: int = get_current_user_id(credentials)
     service = WorkspaceService()
     return await service.list_workspaces(db, user_id)
+
+
+@router.get("/{workspace_id}", response_model=dict)
+async def get_workspace_detailed(
+    workspace_id: int,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a workspace with all related information (knowledge bases, assets, collections)."""
+    user_id: int = get_current_user_id(credentials)
+    service = WorkspaceService()
+    workspace = await service.get_workspace_detailed(db, workspace_id, user_id)
+    
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    
+    # Convert to dict to handle the related data properly
+    result = {
+        "id": workspace.id,
+        "name": workspace.name,
+        "description": workspace.description,
+        "settings": workspace.settings,
+        "is_public": workspace.is_public,
+        "user_id": workspace.user_id,
+        "created_at": workspace.created_at,
+        "updated_at": workspace.updated_at,
+        "collaborators": [
+            {
+                "id": user.id,
+                "name": user.name,
+                "email": user.email,
+            } for user in workspace.users
+        ],
+        "knowledge_bases": [
+            {
+                "id": kb.id,
+                "name": kb.name,
+                "description": kb.description,
+                "collection_name": kb.collection_name,
+                "is_active": kb.is_active,
+                "created_at": kb.created_at,
+                "conversations": [
+                    {
+                        "id": conv.id,
+                        "conversation_name": conv.conversation_name,
+                        "user_id": conv.user_id,
+                        "created_at": conv.created_at,
+                        "updated_at": conv.updated_at,
+                    } for conv in kb.conversations
+                ],
+            } for kb in workspace.knowledge_bases
+        ],
+        "assets": [
+            {
+                "id": asset.id,
+                "type": asset.type,
+                "title": asset.title,
+                "url": asset.url,
+                "file_path": asset.file_path,
+                "content": asset.content,
+                "collection_id": asset.collection_id,
+                "knowledge_base_id": asset.knowledge_base_id,
+                "is_active": asset.is_active,
+                "created_at": asset.created_at,
+            } for asset in workspace.assets
+        ],
+        "collections": [
+            {
+                "id": collection.id,
+                "name": collection.name,
+                "description": collection.description,
+                "knowledge_base_id": collection.knowledge_base_id,
+                "is_active": collection.is_active,
+                "created_at": collection.created_at,
+                "asset_count": len([a for a in workspace.assets if a.collection_id == collection.id]),
+            } for collection in workspace.collections
+        ],
+    }
+    
+    return result
+
+
+@router.put("/{workspace_id}", response_model=Workspace)
+async def update_workspace(
+    workspace_id: int,
+    request: WorkspaceUpdate,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a workspace. Only the owner can update."""
+    user_id: int = get_current_user_id(credentials)
+    service = WorkspaceService()
+    workspace = await service.update_workspace(db, workspace_id, user_id, request)
+    
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found or you don't have permission to update it")
+    
+    return workspace
+
+
+@router.delete("/{workspace_id}", response_model=MessageResponse)
+async def delete_workspace(
+    workspace_id: int,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a workspace. Only the owner can delete."""
+    user_id: int = get_current_user_id(credentials)
+    service = WorkspaceService()
+    success = await service.delete_workspace(db, workspace_id, user_id)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail="Workspace not found or you don't have permission to delete it")
+    
+    return MessageResponse(message=f"Workspace {workspace_id} deleted successfully")

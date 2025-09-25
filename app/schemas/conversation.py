@@ -3,13 +3,11 @@ Pydantic schemas for Conversation and Message models
 """
 from datetime import datetime
 from typing import List, Optional
+
 from pydantic import BaseModel
-from enum import Enum
 
-
-class MessageRole(str, Enum):
-    USER = "user"
-    AGENT = "agent"
+# Import MessageRole from the model to ensure consistency
+from app.models.message import MessageRole
 
 
 # Message schemas
@@ -53,6 +51,7 @@ class ConversationBase(BaseModel):
 
 class ConversationCreate(ConversationBase):
     project_id: int
+    knowledge_base_id: Optional[int] = None
 
 
 class ConversationUpdate(BaseModel):
@@ -62,6 +61,7 @@ class ConversationUpdate(BaseModel):
 class ConversationInDB(ConversationBase):
     id: int
     project_id: int
+    knowledge_base_id: Optional[int] = None
     user_id: int
     created_at: datetime
     updated_at: Optional[datetime]

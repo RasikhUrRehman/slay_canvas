@@ -116,7 +116,8 @@
 
 
 import os
-from typing import Dict, Any
+from typing import Any, Dict
+
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -140,14 +141,14 @@ class EmbeddingService:
             api_key (str | None): OpenAI API key. Defaults to environment variable OPENAI_API_KEY.
             model (str): Model ID to use for embeddings.
         """
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY", "test")
         if not self.api_key:
             raise ValueError(
                 "API key not provided. Set OPENAI_API_KEY environment variable or pass it explicitly."
             )
 
         self.model = model
-        self.client = OpenAI()
+        self.client = OpenAI(api_key=self.api_key)
 
     def get_embedding(self, text: str) -> Dict[str, Any]:
         """
@@ -169,7 +170,7 @@ class EmbeddingService:
 
 if __name__ == "__main__":
     # Example usage
-    service = OpenAIEmbeddingService()
+    service = EmbeddingService()
     embedding = service.get_embedding("Today is a sunny day and I will get some ice cream.")
     print(f"Embedding length: {len(embedding['embeddings'])}")
     print(embedding['embeddings'][:10])

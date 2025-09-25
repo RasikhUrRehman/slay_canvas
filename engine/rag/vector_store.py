@@ -5,17 +5,23 @@ Vector store implementation for RAG-based system using Milvus and custom NLP Clo
 import logging
 import os
 import uuid
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Any, Dict, List, Optional, Tuple
 
-from pymilvus import (
-    Collection, CollectionSchema, DataType, FieldSchema,
-    connections, utility, MilvusClient
-)
 from dotenv import load_dotenv
+from pymilvus import (
+    Collection,
+    CollectionSchema,
+    DataType,
+    FieldSchema,
+    MilvusClient,
+    connections,
+    utility,
+)
+
+from app.core.config import settings
 
 # Import the custom embedding service
 from engine.services.embedding import EmbeddingService
-from app.core.config import settings
 
 # Load environment variables from .env.local
 load_dotenv(".env.local")
@@ -221,7 +227,8 @@ class VectorStore:
                 raise
 
     def similarity_search(self, query: str, k: int = 5, content_type_filter: Optional[str] = None, 
-                         user_id: Optional[int] = None, project_name: Optional[str] = None) -> List[Tuple[str, float, Dict]]:
+                         user_id: Optional[int] = None, project_name: Optional[str] = None,
+                         source_urls: Optional[List[str]] = None) -> List[Tuple[str, float, Dict]]:
         """
         Search for similar documents.
         
@@ -231,6 +238,7 @@ class VectorStore:
             content_type_filter: Optional filter by content type
             user_id: Optional filter by user ID
             project_name: Optional filter by project name
+            source_urls: Optional list of source URLs to filter by
             
         Returns:
             List of tuples (document, distance, metadata)
@@ -249,6 +257,12 @@ class VectorStore:
             filter_conditions.append(f'user_id == {user_id}')
         if project_name:
             filter_conditions.append(f'project_name == "{project_name}"')
+        if source_urls:
+            # Create OR condition for multiple source URLs
+            source_url_conditions = [f'source_url == "{url}"' for url in source_urls if url]
+            if source_url_conditions:
+                source_url_expr = " || ".join(source_url_conditions)
+                filter_conditions.append(f'({source_url_expr})')
         
         filter_expr = " && ".join(filter_conditions) if filter_conditions else None
 

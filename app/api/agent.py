@@ -1,58 +1,68 @@
+# TODO: update key for the knowledge base
+
 """
 Agent Router for Knowledge Base Management with Authentication
 Provides endpoints for knowledge base operations and agent communication
 with JWT authentication and user-specific data isolation.
 """
 
-import logging
-import time
-import tempfile
-import os
+import asyncio
 import io
-from typing import Dict, List, Any, Optional
-from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
+import logging
+import os
+import tempfile
+import time
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from pymilvus import MilvusClient, utility
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from engine.rag.rag_system import RAGSystem
-from engine.llm.agent import KnowledgeBaseAgent
-from engine.rag.vector_store import VectorStore
-from pymilvus import MilvusClient, utility
 from app.core.config import settings
-from app.utils.auth import get_current_user_id
 from app.db.session import get_db
-from app.services.conversation_service import conversation_service, message_service
 from app.models.message import MessageRole
 from app.schemas.conversation import ConversationCreate, MessageCreate
+from app.schemas.knowledge_base import (
+    KnowledgeBaseCreate,
+    KnowledgeBasePublic,
+    KnowledgeBaseWithStats,
+)
+from app.services.conversation_service import conversation_service, message_service
+from app.services.knowledge_base_service import knowledge_base_service
+from app.utils.auth import get_current_user_id
+from engine.llm.agent import KnowledgeBaseAgent
+from engine.rag.rag_system import RAGSystem
+from engine.rag.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
 
-def _get_knowledge_base(kb_name: str, user_id: int) -> VectorStore:
+async def _get_knowledge_base_from_db(kb_name: str, user_id: int, db: AsyncSession):
     """
-    Get a knowledge base VectorStore instance by name for a specific user.
+    Get a knowledge base from database by name for a specific user.
     
-    Checks if collection exists in Milvus and returns VectorStore instance.
+    Returns both the database record and VectorStore instance.
     """
-    # Check if collection exists in Milvus directly
     try:
-        # Use the exact collection name (user-provided name with user prefix)
-        collection_name = f"user_{user_id}_{kb_name.lower().replace(' ', '_')}"
-        temp_vector_store = VectorStore(collection_name="temp_discovery")
-        client = temp_vector_store.client
+        # Get knowledge base from database
+        kb = await knowledge_base_service.get_knowledge_base_by_name(db, kb_name, user_id)
+        if not kb:
+            raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_name}' not found")
         
-        # Check if collection exists
-        if client.has_collection(collection_name=collection_name):
-            vector_store = VectorStore(collection_name=collection_name)
-            return vector_store
-                
+        # Get VectorStore instance
+        vector_store = knowledge_base_service.get_vector_store(kb)
+        
+        return kb, vector_store
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.warning(f"Error checking knowledge base {kb_name} for user {user_id}: {str(e)}")
-    
-    raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_name}' not found")
+        logger.error(f"Error getting knowledge base {kb_name} for user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get knowledge base: {str(e)}")
 
 
 # Pydantic models for request/response
@@ -71,6 +81,16 @@ class KnowledgeBaseInfo(BaseModel):
     chunk_count: int
     created_at: str
     stats: Dict[str, Any]
+
+
+class KnowledgeBaseWithConversations(BaseModel):
+    name: str
+    description: Optional[str]
+    document_count: int
+    chunk_count: int
+    created_at: str
+    stats: Dict[str, Any]
+    conversations: List[Dict[str, Any]]
 
 
 class AddDocumentRequest(BaseModel):
@@ -96,34 +116,73 @@ class ChatAgentRequest(BaseModel):
 
 class AgentResponse(BaseModel):
     answer: str
-    tools_used: List[str]
-    reasoning: str
     confidence: float
     processing_time: float
     sources: Optional[List[Dict[str, Any]]] = None
     error: Optional[str] = None
 
 
+class SelectiveSearchRequest(BaseModel):
+    message: str
+    knowledge_base_name: str
+    document_titles: List[str]
+    conversation_id: Optional[int] = None
+
+
+class GenerateIdeaRequest(BaseModel):
+    knowledge_base_name: str
+    topic: Optional[str] = None
+    content_type: Optional[str] = "article"  # article, blog_post, summary, etc.
+    max_length: Optional[int] = 1000
+    conversation_id: Optional[int] = None
+
+
+class ConversationWithMessages(BaseModel):
+    id: int
+    conversation_name: str
+    project_id: int
+    knowledge_base_id: Optional[int]
+    user_id: int
+    created_at: str
+    updated_at: str
+    messages: List[Dict[str, Any]]
+
+
 @router.post("/knowledge-bases", response_model=Dict[str, str])
 async def create_knowledge_base(
     request: CreateKnowledgeBaseRequest,
-    current_user_id: int = Depends(get_current_user_id)
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
 ):
-    """Create a new knowledge base for the authenticated user using VectorStore."""
+    """Create a new knowledge base for the authenticated user using database service."""
     try:
-        # Check if knowledge base already exists for this user
-        collection_name = f"user_{current_user_id}_{request.name.lower().replace(' ', '_')}"
-        temp_vector_store = VectorStore(collection_name="temp_discovery")
-        client = temp_vector_store.client
+        # Get workspace by project_name or throw error
+        from app.services.workspace_service import WorkspaceService
         
-        if client.has_collection(collection_name=collection_name):
-            raise HTTPException(status_code=400, detail=f"Knowledge base '{request.name}' already exists")
+        workspace_service = WorkspaceService()
         
-        # Create VectorStore with user-specific collection name
-        vector_store = VectorStore(
-            collection_name=collection_name,
-            dimension=1536  # OpenAI text-embedding-3-small dimension
+        # Get workspace by name
+        workspace = await workspace_service.get_workspace_by_name(db, request.project_name, current_user_id)
+        
+        if not workspace:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Workspace '{request.project_name}' not found. Please create the workspace first."
+            )
+
+        name = f"chat_{current_user_id}_{int(time.time())}"
+        
+        # Create knowledge base data for service
+        kb_create = KnowledgeBaseCreate(
+            name=name,
+            description=request.description,
+            chunk_size=request.chunk_size,
+            chunk_overlap=request.chunk_overlap,
+            workspace_id=workspace.id
         )
+        
+        # Create knowledge base using service
+        kb = await knowledge_base_service.create_knowledge_base(db, kb_create, current_user_id)
         
         logger.info(f"Created knowledge base: {request.name} for user {current_user_id}")
         
@@ -131,78 +190,69 @@ async def create_knowledge_base(
             "message": f"Knowledge base '{request.name}' created successfully",
             "name": request.name,
             "project_name": request.project_name,
-            "collection_name": collection_name,
-            "user_id": str(current_user_id)
+            "collection_name": kb.full_collection_name,
+            "user_id": str(current_user_id),
+            "id": str(kb.id)
         }
         
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error creating knowledge base: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to create knowledge base: {str(e)}")
 
 
 @router.get("/knowledge-bases", response_model=List[KnowledgeBaseInfo])
-async def list_knowledge_bases(current_user_id: int = Depends(get_current_user_id)):
-    """List all available knowledge bases for the authenticated user by discovering collections in Milvus."""
+async def list_knowledge_bases(
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """List all available knowledge bases for the authenticated user from database."""
     try:
-        knowledge_bases = []
+        # Get knowledge bases from database
+        knowledge_bases_db = await knowledge_base_service.list_user_knowledge_bases(db, current_user_id)
         
-        # Discover collections using VectorStore
-        try:
-            # Connect to Milvus through VectorStore to list collections
-            temp_vector_store = VectorStore(collection_name="temp_discovery")
-            client = temp_vector_store.client
-            
-            # List all collections in Milvus
-            collections = client.list_collections()
-            
-            # Filter collections for the current user
-            user_prefix = f"user_{current_user_id}_"
-            
-            for collection_name in collections:
-                try:
-                    # Skip system collections and collections not belonging to this user
-                    if collection_name.startswith("temp_") or collection_name in ["temp_discovery"]:
-                        continue
-                    
-                    if not collection_name.startswith(user_prefix):
-                        continue
-                    
-                    # Extract knowledge base name from collection name
-                    kb_name = collection_name[len(user_prefix):].replace("_", " ").title()
-                    
-                    # Use VectorStore to get collection statistics
-                    collection_vector_store = VectorStore(collection_name=collection_name)
-                    collection_stats = collection_vector_store.get_collection_stats()
-                    documents = collection_vector_store.list_all_documents()
-                    
-                    # Count unique documents by source_url
-                    unique_sources = set()
-                    for _, metadata in documents:
-                        source_url = metadata.get('source_url', '')
-                        if source_url:
-                            unique_sources.add(source_url)
-                    
-                    kb_info = KnowledgeBaseInfo(
-                        name=kb_name,
-                        description=f"Knowledge base: {kb_name}",
-                        document_count=len(unique_sources),
-                        chunk_count=collection_stats.get("total_entities", 0),
-                        created_at="unknown",
-                        stats={
-                            "collection_name": collection_name,
-                            "total_entities": collection_stats.get("total_entities", 0),
-                            "dimension": collection_stats.get("dimension", 0),
-                            "unique_sources": len(unique_sources)
-                        }
-                    )
-                    knowledge_bases.append(kb_info)
-                    
-                except Exception as e:
-                    logger.warning(f"Error processing collection {collection_name}: {str(e)}")
-                    continue
-                    
-        except Exception as e:
-            logger.warning(f"Error discovering collections: {str(e)}")
+        knowledge_bases = []
+        for kb in knowledge_bases_db:
+            try:
+                # Get statistics from Milvus
+                stats = await knowledge_base_service.get_knowledge_base_stats(kb)
+                
+                kb_info = KnowledgeBaseInfo(
+                    name=kb.name,
+                    description=kb.description or f"Knowledge base: {kb.name}",
+                    document_count=stats.get("document_count", 0),
+                    chunk_count=stats.get("chunk_count", 0),
+                    created_at=kb.created_at.isoformat(),
+                    stats={
+                        "id": kb.id,
+                        "collection_name": kb.full_collection_name,
+                        "chunk_size": kb.chunk_size,
+                        "chunk_overlap": kb.chunk_overlap,
+                        "embedding_model": kb.embedding_model,
+                        "is_active": kb.is_active,
+                        "workspace_id": kb.workspace_id,
+                        # **stats.get("milvus_stats", {})
+                    }
+                )
+                knowledge_bases.append(kb_info)
+                
+            except Exception as e:
+                logger.warning(f"Error processing knowledge base {kb.name}: {str(e)}")
+                # Still include the KB even if stats fail
+                kb_info = KnowledgeBaseInfo(
+                    name=kb.name,
+                    description=kb.description or f"Knowledge base: {kb.name}",
+                    document_count=0,
+                    chunk_count=0,
+                    created_at=kb.created_at.isoformat(),
+                    stats={
+                        "id": kb.id,
+                        "collection_name": kb.full_collection_name,
+                        "error": str(e)
+                    }
+                )
+                knowledge_bases.append(kb_info)
         
         return knowledge_bases
         
@@ -211,32 +261,55 @@ async def list_knowledge_bases(current_user_id: int = Depends(get_current_user_i
         raise HTTPException(status_code=500, detail=f"Failed to list knowledge bases: {str(e)}")
 
 
-@router.get("/knowledge-bases/{kb_name}", response_model=KnowledgeBaseInfo)
+@router.get("/knowledge-bases/{kb_name}", response_model=KnowledgeBaseWithConversations)
 async def get_knowledge_base(
     kb_name: str,
-    current_user_id: int = Depends(get_current_user_id)
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
 ):
-    """Get information about a specific knowledge base for the authenticated user."""
+    """Get information about a specific knowledge base with all its conversations for the authenticated user."""
     try:
-        vector_store = _get_knowledge_base(kb_name, current_user_id)
+        kb, vector_store = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
         
-        stats = vector_store.get_collection_stats()
-        documents = vector_store.list_all_documents()
+        # Get statistics from Milvus
+        stats = await knowledge_base_service.get_knowledge_base_stats(kb)
         
-        # Count unique documents by source_url
-        unique_sources = set()
-        for _, metadata in documents:
-            source_url = metadata.get('source_url', '')
-            if source_url:
-                unique_sources.add(source_url)
+        # Get all conversations for this knowledge base
+        conversations_db = await conversation_service.get_conversations_by_knowledge_base(
+            db, kb.id, current_user_id
+        )
         
-        return KnowledgeBaseInfo(
-            name=kb_name,
-            description=f"Test knowledge base: {kb_name}",
-            document_count=len(unique_sources),
-            chunk_count=stats.get("total_entities", 0),
-            created_at="unknown",
-            stats=stats
+        # Format conversations with their messages
+        conversations = []
+        for conv in conversations_db:
+            # Format messages for this conversation        
+            conversations.append({
+                "id": conv.id,
+                "conversation_name": conv.conversation_name,
+                "project_id": conv.project_id,
+                "knowledge_base_id": conv.knowledge_base_id,
+                "user_id": conv.user_id,
+                "created_at": conv.created_at.isoformat(),
+                "updated_at": conv.updated_at.isoformat(),
+            })
+        
+        return KnowledgeBaseWithConversations(
+            name=kb.name,
+            description=kb.description or f"Knowledge base: {kb.name}",
+            document_count=stats.get("document_count", 0),
+            chunk_count=stats.get("chunk_count", 0),
+            created_at=kb.created_at.isoformat(),
+            stats={
+                "id": kb.id,
+                "collection_name": kb.full_collection_name,
+                "chunk_size": kb.chunk_size,
+                "chunk_overlap": kb.chunk_overlap,
+                "embedding_model": kb.embedding_model,
+                "is_active": kb.is_active,
+                "workspace_id": kb.workspace_id,
+                **stats.get("milvus_stats", {})
+            },
+            conversations=conversations
         )
         
     except HTTPException:
@@ -249,18 +322,21 @@ async def get_knowledge_base(
 @router.delete("/knowledge-bases/{kb_name}")
 async def delete_knowledge_base(
     kb_name: str,
-    current_user_id: int = Depends(get_current_user_id)
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
 ):
-    """Delete a knowledge base and all its data using VectorStore."""
+    """Delete a knowledge base and all its data using database service."""
     try:
-        vector_store = _get_knowledge_base(kb_name, current_user_id)
+        kb, _ = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
         
-        # Drop the collection completely (this removes it from Milvus)
-        collection_name = vector_store.collection_name
-        vector_store.client.drop_collection(collection_name=collection_name)
+        # Delete using service (handles both database and Milvus)
+        success = await knowledge_base_service.delete_knowledge_base(db, kb.id, current_user_id)
         
-        logger.info(f"Deleted knowledge base: {kb_name} for user {current_user_id}")
-        return {"message": f"Knowledge base '{kb_name}' deleted successfully"}
+        if success:
+            logger.info(f"Deleted knowledge base: {kb_name} for user {current_user_id}")
+            return {"message": f"Knowledge base '{kb_name}' deleted successfully"}
+        else:
+            raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_name}' not found")
             
     except HTTPException:
         raise
@@ -273,16 +349,18 @@ async def delete_knowledge_base(
 async def add_document_from_url(
     kb_name: str, 
     request: AddDocumentRequest,
-    current_user_id: int = Depends(get_current_user_id)
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
 ):
     """Add a document to the knowledge base from a URL using VectorStore."""
     try:
-        vector_store = _get_knowledge_base(kb_name, current_user_id)
+        kb, vector_store = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
         
         # Import required services for document processing
-        from engine.services.extractor import Extractor
-        from engine.rag.document_splitter import DocumentSplitter
         from datetime import datetime
+
+        from engine.rag.document_splitter import DocumentSplitter
+        from engine.services.extractor import Extractor
         
         start_time = datetime.now()
         
@@ -344,15 +422,17 @@ async def add_document_from_url(
 async def add_text_document(
     kb_name: str, 
     request: AddTextRequest,
-    current_user_id: int = Depends(get_current_user_id)
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
 ):
     """Add a text document to the knowledge base using VectorStore."""
     try:
-        vector_store = _get_knowledge_base(kb_name, current_user_id)
+        kb, vector_store = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
         
         # Import required services for document processing
-        from engine.rag.document_splitter import DocumentSplitter
         from datetime import datetime
+
+        from engine.rag.document_splitter import DocumentSplitter
         
         start_time = datetime.now()
         
@@ -412,16 +492,18 @@ async def add_text_document(
 async def add_document_from_file(
     kb_name: str, 
     file: UploadFile = File(...),
-    current_user_id: int = Depends(get_current_user_id)
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
 ):
     """Add a document to the knowledge base from an uploaded file using Extractor."""
     try:
-        vector_store = _get_knowledge_base(kb_name, current_user_id)
+        kb, vector_store = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
         
         # Import required services for document processing
-        from engine.services.extractor import Extractor
-        from engine.rag.document_splitter import DocumentSplitter
         from datetime import datetime
+
+        from engine.rag.document_splitter import DocumentSplitter
+        from engine.services.extractor import Extractor
         
         start_time = datetime.now()
         
@@ -513,11 +595,12 @@ async def add_document_from_file(
 async def add_audio_file(
     kb_name: str, 
     file: UploadFile = File(...),
-    current_user_id: int = Depends(get_current_user_id)
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
 ):
     """Add an audio file to the knowledge base by transcribing it using Extractor."""
     try:
-        vector_store = _get_knowledge_base(kb_name, current_user_id)
+        kb, vector_store = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
         
         # Import required services for audio processing
         from datetime import datetime
@@ -609,11 +692,12 @@ async def add_audio_file(
 @router.get("/knowledge-bases/{kb_name}/documents")
 async def list_documents(
     kb_name: str,
-    current_user_id: int = Depends(get_current_user_id)
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
 ):
     """List all documents in the knowledge base for the authenticated user."""
     try:
-        vector_store = _get_knowledge_base(kb_name, current_user_id)
+        kb, vector_store = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
         
         # Get all documents from vector store
         documents = vector_store.list_all_documents()
@@ -656,11 +740,12 @@ async def list_documents(
 async def delete_document(
     kb_name: str, 
     source_url: str,
-    current_user_id: int = Depends(get_current_user_id)
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
 ):
     """Delete a specific document from the knowledge base for the authenticated user."""
     try:
-        vector_store = _get_knowledge_base(kb_name, current_user_id)
+        kb, vector_store = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
         
         # Delete document by source URL
         deleted_count = vector_store.delete_by_source_url(source_url)
@@ -684,12 +769,13 @@ async def delete_document(
 async def query_agent(
     kb_name: str, 
     request: QueryAgentRequest,
-    current_user_id: int = Depends(get_current_user_id)
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
 ):
     """Query the agent using the specified knowledge base and return streaming response."""
     try:
-        # Get the knowledge base
-        vector_store = _get_knowledge_base(kb_name, current_user_id)
+        # Get the knowledge base from database
+        kb, vector_store = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
         
         # Create agent for the knowledge base on demand
         collection_name = vector_store.collection_name
@@ -699,7 +785,7 @@ async def query_agent(
         async def generate_response():
             try:
                 # Get streaming response from agent
-                for chunk in agent.process_query_stream(request.message, []):
+                async for chunk in agent.process_query_stream(request.message, []):
                     yield f"data: {chunk}\n\n"
                 
                 # Send end of stream marker
@@ -727,6 +813,54 @@ async def query_agent(
         raise HTTPException(status_code=500, detail=f"Failed to query agent: {str(e)}")
 
 
+@router.get("/conversations/{conversation_id}", response_model=ConversationWithMessages)
+async def get_conversation_with_messages(
+    conversation_id: int,
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get a conversation with all its messages for the authenticated user."""
+    try:
+        # Get conversation with messages
+        conversation = await conversation_service.get_conversation_by_id(db, conversation_id)
+        
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Verify the conversation belongs to the current user
+        if conversation.user_id != current_user_id:
+            raise HTTPException(status_code=403, detail="Access denied to this conversation")
+        
+        # Format messages
+        messages = []
+        if conversation.messages:
+            for msg in conversation.messages:
+                messages.append({
+                    "id": msg.id,
+                    "content": msg.content,
+                    "role": msg.role.value,
+                    "created_at": msg.created_at.isoformat(),
+                    "user_id": msg.user_id
+                })
+        
+        return ConversationWithMessages(
+            id=conversation.id,
+            conversation_name=conversation.conversation_name,
+            project_id=conversation.project_id,
+            knowledge_base_id=conversation.knowledge_base_id,
+            user_id=conversation.user_id,
+            created_at=conversation.created_at.isoformat(),
+            updated_at=conversation.updated_at.isoformat(),
+            messages=messages
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting conversation {conversation_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get conversation: {str(e)}")
+
+
 @router.post("/chat-agent")
 async def chat_agent(
     request: ChatAgentRequest,
@@ -743,9 +877,22 @@ async def chat_agent(
         
         # If no conversation_id provided, create a new conversation
         if conversation_id is None:
+            # Get the knowledge base first to link it to the conversation
+            kb, _ = await _get_knowledge_base_from_db(request.knowledge_base_name, current_user_id, db)
+            
+            # Use the knowledge base's workspace
+            if not kb.workspace_id:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Knowledge base '{request.knowledge_base_name}' is not associated with any workspace"
+                )
+            
+            project_id = kb.workspace_id
+            
             conversation_data = ConversationCreate(
                 conversation_name=f"Chat with {request.knowledge_base_name}",
-                project_id=1  # You can modify this if you have project context
+                project_id=project_id,
+                knowledge_base_id=kb.id  # Link conversation to knowledge base
             )
             conversation = await conversation_service.create_conversation(
                 db=db,
@@ -762,7 +909,7 @@ async def chat_agent(
         # Save user message to database
         user_message_data = MessageCreate(
             content=request.message,
-            role=MessageRole.USER,
+            role=MessageRole.user,
             conversation_id=conversation_id,
             user_id=current_user_id
         )
@@ -783,11 +930,12 @@ async def chat_agent(
                     "content": msg.content
                 })
         
-        # Get the knowledge base
-        vector_store = _get_knowledge_base(request.knowledge_base_name, current_user_id)
+        # Get the knowledge base from database
+        kb, vector_store = await _get_knowledge_base_from_db(request.knowledge_base_name, current_user_id, db)
         
         # Initialize the agent
-        agent = KnowledgeBaseAgent(vector_store)
+        collection_name = vector_store.collection_name
+        agent = KnowledgeBaseAgent(rag_collection_name=collection_name)
         
         async def generate_response():
             """Generate streaming response with only the agent's answer"""
@@ -800,11 +948,15 @@ async def chat_agent(
                         full_response += chunk
                         # Send only the content without any thinking steps or metadata
                         yield f"data: {chunk}\n\n"
+                        # Add 0.1 second delay for streaming effect
+                        await asyncio.sleep(0.1)
+                        # Add 0.1 second delay for streaming effect
+                        await asyncio.sleep(0.1)
                 
                 # Save agent response to database
                 agent_message_data = MessageCreate(
                     content=full_response,
-                    role=MessageRole.AGENT,
+                    role=MessageRole.agent,
                     conversation_id=conversation_id,
                     user_id=current_user_id
                 )
@@ -836,6 +988,423 @@ async def chat_agent(
     except Exception as e:
         logger.error(f"Error in chat agent: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to process chat: {str(e)}")
+
+
+@router.post("/knowledge-bases/{kb_name}/selective-search")
+async def selective_search_agent(
+    kb_name: str,
+    request: SelectiveSearchRequest,
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Chat with the agent using streaming response, searching only within specific documents.
+    Creates a new conversation if conversation_id is not provided.
+    Returns only the agent's answer without thinking steps.
+    """
+    try:
+        conversation_id = request.conversation_id
+        
+        # If no conversation_id provided, create a new conversation
+        if conversation_id is None:
+            # Get the knowledge base first to link it to the conversation
+            kb, _ = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
+            
+            # Use the knowledge base's workspace
+            if not kb.workspace_id:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Knowledge base '{kb_name}' is not associated with any workspace"
+                )
+            
+            project_id = kb.workspace_id
+            
+            conversation_data = ConversationCreate(
+                conversation_name=f"Selective Search in {kb_name}",
+                project_id=project_id,
+                knowledge_base_id=kb.id  # Link conversation to knowledge base
+            )
+            conversation = await conversation_service.create_conversation(
+                db=db,
+                conversation_data=conversation_data,
+                user_id=current_user_id
+            )
+            conversation_id = conversation.id
+        else:
+            # Verify the conversation belongs to the current user
+            conversation = await conversation_service.get_conversation_by_id(db, conversation_id)
+            if not conversation or conversation.user_id != current_user_id:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Save user message to database
+        user_message_data = MessageCreate(
+            content=request.message,
+            role=MessageRole.user,
+            conversation_id=conversation_id,
+            user_id=current_user_id
+        )
+        user_message = await message_service.create_message(
+            db=db,
+            message_data=user_message_data
+        )
+        
+        # Load conversation history (last 10 messages for context)
+        conversation_with_messages = await conversation_service.get_conversation_by_id(db, conversation_id)
+        conversation_history = []
+        if conversation_with_messages and conversation_with_messages.messages:
+            # Get last 10 messages, excluding the current user message
+            recent_messages = conversation_with_messages.messages[-11:-1] if len(conversation_with_messages.messages) > 1 else []
+            for msg in recent_messages:
+                # Convert database role to LLM API role
+                api_role = "assistant" if msg.role.value == "agent" else msg.role.value
+                conversation_history.append({
+                    "role": api_role,
+                    "content": msg.content
+                })
+        
+        # Get the knowledge base from database
+        kb, vector_store = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
+        
+        # Filter documents by the provided titles
+        all_documents = vector_store.list_all_documents()
+        matching_source_urls = set()
+        
+        # If no document titles are provided or the list is empty, use all documents
+        if not request.document_titles:
+            # Add all document source URLs
+            for _, metadata in all_documents:
+                matching_source_urls.add(metadata.get('source_url', ''))
+        else:
+            # Filter by specific document titles
+            for _, metadata in all_documents:
+                doc_title = metadata.get('title', '').strip()
+                original_filename = metadata.get('original_filename', '').strip()
+                
+                # Check if any of the requested titles match this document
+                for requested_title in request.document_titles:
+                    requested_title = requested_title.strip()
+                    
+                    # Match against title or original filename (case-insensitive)
+                    if (doc_title and requested_title.lower() in doc_title.lower()) or \
+                       (original_filename and requested_title.lower() in original_filename.lower()) or \
+                       (requested_title.lower() == doc_title.lower()) or \
+                       (requested_title.lower() == original_filename.lower()):
+                        matching_source_urls.add(metadata.get('source_url', ''))
+                        break
+        
+        # Create a custom agent that searches only within selected documents
+        class SelectiveKnowledgeBaseAgent:
+            def __init__(self, vector_store, selected_source_urls):
+                self.vector_store = vector_store
+                self.selected_source_urls = selected_source_urls
+                # Initialize the base agent for LLM functionality
+                collection_name = vector_store.collection_name
+                self.base_agent = KnowledgeBaseAgent(rag_collection_name=collection_name)
+            
+            async def process_query_stream(self, query, conversation_history=None):
+                """Process query with selective document filtering"""
+                if not self.selected_source_urls:
+                    yield "No documents found in the knowledge base."
+                    return
+                
+                # Convert set to list for the vector store method
+                source_urls_list = list(self.selected_source_urls)
+                if not source_urls_list or not any(url for url in source_urls_list):
+                    yield "No valid source URLs found for filtering."
+                    return
+                
+                # Perform filtered similarity search
+                try:
+                    search_results = self.vector_store.similarity_search(
+                        query=query,
+                        k=5,
+                        source_urls=source_urls_list
+                    )
+                    
+                    if not search_results:
+                        yield f"No relevant content found in the specified documents for the query: '{query}'"
+                        return
+                    
+                    # Create context from search results (search_results is a list of tuples: (text, distance, metadata))
+                    context_texts = [result[0] for result in search_results]  # Extract text from tuple
+                    context = "\n\n".join(context_texts)
+                    
+                    # Generate response using the base agent's LLM with filtered context
+                    try:
+                        # Create a prompt with the filtered context
+                        prompt = f"""Based on the following context from the selected documents, answer the user's question.
+
+Context:
+{context}
+
+Question: {query}
+
+Please provide a comprehensive answer based only on the information provided in the context above."""
+                        
+                        # Use the base agent's LLM to generate response
+                        llm_client = self.base_agent.llm_client
+                        
+                        # Prepare conversation history in the correct format
+                        messages = []
+                        if conversation_history:
+                            for msg in conversation_history:
+                                messages.append({
+                                    "role": msg["role"],
+                                    "content": msg["content"]
+                                })
+                        
+                        # Add the current prompt
+                        messages.append({
+                            "role": "user",
+                            "content": prompt
+                        })
+                        
+                        # Stream response from LLM
+                        stream = llm_client.chat.completions.create(
+                            model=self.base_agent.model,
+                            messages=messages,
+                            max_tokens=self.base_agent.max_tokens,
+                            temperature=self.base_agent.temperature,
+                            stream=True
+                        )
+                        
+                        for chunk in stream:
+                            if chunk.choices[0].delta.content is not None:
+                                yield chunk.choices[0].delta.content
+                                
+                    except Exception as llm_error:
+                        logger.error(f"Error generating LLM response: {str(llm_error)}")
+                        yield f"Error generating response: {str(llm_error)}"
+                        
+                except Exception as e:
+                    logger.error(f"Error in selective search: {str(e)}")
+                    yield f"Error performing selective search: {str(e)}"
+        
+        # Initialize the selective agent
+        agent = SelectiveKnowledgeBaseAgent(vector_store, matching_source_urls)
+        
+        async def generate_response():
+            """Generate streaming response with only the agent's answer"""
+            try:
+                full_response = ""
+                
+                # Stream the response from the agent
+                async for chunk in agent.process_query_stream(request.message, conversation_history):
+                    if chunk:
+                        full_response += chunk
+                        # Send only the content without any thinking steps or metadata
+                        yield f"data: {chunk}\n\n"
+                        # Add 0.1 second delay for streaming effect
+                        await asyncio.sleep(0.1)
+                
+                # Save agent response to database
+                agent_message_data = MessageCreate(
+                    content=full_response,
+                    role=MessageRole.agent,
+                    conversation_id=conversation_id,
+                    user_id=current_user_id
+                )
+                await message_service.create_message(
+                    db=db,
+                    message_data=agent_message_data
+                )
+                
+                # Send conversation_id in the final message for client reference
+                yield f"data: [CONVERSATION_ID:{conversation_id}]\n\n"
+                yield f"data: [DONE]\n\n"
+                
+            except Exception as e:
+                logger.error(f"Error in streaming response: {str(e)}")
+                yield f"data: [ERROR: {str(e)}]\n\n"
+        
+        return StreamingResponse(
+            generate_response(),
+            media_type="text/plain",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Content-Type": "text/plain; charset=utf-8"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in selective search agent: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to process selective search: {str(e)}")
+
+
+@router.post("/knowledge-bases/{kb_name}/generate-idea")
+async def generate_idea(
+    kb_name: str,
+    request: GenerateIdeaRequest,
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate new content ideas based on all documents in the knowledge base.
+    Creates a new conversation if conversation_id is not provided.
+    Returns streaming response with generated content.
+    """
+    try:
+        conversation_id = request.conversation_id
+        
+        # If no conversation_id provided, create a new conversation
+        if conversation_id is None:
+            # Get the knowledge base first to link it to the conversation
+            kb, _ = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
+            
+            # Use the knowledge base's workspace
+            if not kb.workspace_id:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Knowledge base '{kb_name}' is not associated with any workspace"
+                )
+            
+            project_id = kb.workspace_id
+            
+            conversation_data = ConversationCreate(
+                conversation_name=f"Idea Generation from {kb_name}",
+                project_id=project_id,
+                knowledge_base_id=kb.id  # Link conversation to knowledge base
+            )
+            conversation = await conversation_service.create_conversation(
+                db=db,
+                conversation_data=conversation_data,
+                user_id=current_user_id
+            )
+            conversation_id = conversation.id
+        else:
+            # Verify the conversation belongs to the current user
+            conversation = await conversation_service.get_conversation_by_id(db, conversation_id)
+            if not conversation or conversation.user_id != current_user_id:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Get the knowledge base from database
+        kb, vector_store = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
+        
+        # Retrieve all documents from the knowledge base
+        all_documents = vector_store.list_all_documents()
+        
+        if not all_documents:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"No documents found in knowledge base '{kb_name}'"
+            )
+        
+        # Prepare content for idea generation
+        document_summaries = []
+        unique_sources = set()
+        
+        for text, metadata in all_documents:
+            source_url = metadata.get('source_url', '')
+            title = metadata.get('title', 'Untitled')
+            content_type = metadata.get('content_type', 'unknown')
+            
+            # Avoid duplicate sources and create summaries
+            if source_url not in unique_sources:
+                unique_sources.add(source_url)
+                # Take first 500 characters as summary
+                summary = text[:500] + "..." if len(text) > 500 else text
+                document_summaries.append({
+                    'title': title,
+                    'content_type': content_type,
+                    'summary': summary,
+                    'source_url': source_url
+                })
+        
+        # Create the idea generation prompt
+        topic_context = f" focusing on the topic: {request.topic}" if request.topic else ""
+        content_type_instruction = f"Format the output as a {request.content_type}."
+        
+        idea_prompt = f"""Based on the following documents from the knowledge base, generate new creative content ideas{topic_context}.
+
+Available Documents:
+"""
+        
+        for i, doc in enumerate(document_summaries[:20], 1):  # Limit to 20 documents to avoid token limits
+            idea_prompt += f"\n{i}. Title: {doc['title']}\n   Type: {doc['content_type']}\n   Summary: {doc['summary']}\n"
+        
+        idea_prompt += f"""
+
+Task: Generate innovative and creative content based on the themes, concepts, and information from these documents. {content_type_instruction}
+
+Requirements:
+- Create original content that synthesizes information from multiple sources
+- Identify patterns, connections, and insights across the documents
+- Suggest new perspectives or applications of the existing knowledge
+- Keep the response under {request.max_length} words
+- Be creative and think outside the box while staying grounded in the source material
+
+Generate your response now:"""
+        
+        # Save the generation request as a user message
+        user_message_data = MessageCreate(
+            content=f"Generate idea for {request.content_type}" + (f" about {request.topic}" if request.topic else ""),
+            role=MessageRole.USER,
+            conversation_id=conversation_id,
+            user_id=current_user_id
+        )
+        user_message = await message_service.create_message(
+            db=db,
+            message_data=user_message_data
+        )
+        
+        # Initialize the agent for idea generation
+        agent = KnowledgeBaseAgent(vector_store)
+        
+        async def generate_response():
+            """Generate streaming response with the generated idea"""
+            try:
+                full_response = ""
+                
+                # Use the agent's LLM client directly for idea generation
+                async for chunk in agent.llm_client.stream_completion(
+                    messages=[{"role": "user", "content": idea_prompt}],
+                    max_tokens=request.max_length,
+                    temperature=0.7  # Higher temperature for more creativity
+                ):
+                    if chunk:
+                        full_response += chunk
+                        yield f"data: {chunk}\n\n"
+                        # Add 0.1 second delay for streaming effect
+                        await asyncio.sleep(0.1)
+                
+                # Save agent response to database
+                agent_message_data = MessageCreate(
+                    content=full_response,
+                    role=MessageRole.AGENT,
+                    conversation_id=conversation_id,
+                    user_id=current_user_id
+                )
+                await message_service.create_message(
+                    db=db,
+                    message_data=agent_message_data
+                )
+                
+                # Send conversation_id in the final message for client reference
+                yield f"data: [CONVERSATION_ID:{conversation_id}]\n\n"
+                yield f"data: [DONE]\n\n"
+                
+            except Exception as e:
+                logger.error(f"Error in idea generation streaming response: {str(e)}")
+                yield f"data: [ERROR: {str(e)}]\n\n"
+        
+        return StreamingResponse(
+            generate_response(),
+            media_type="text/plain",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Content-Type": "text/plain; charset=utf-8"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in generate idea: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate idea: {str(e)}")
 
 
 @router.get("/health")

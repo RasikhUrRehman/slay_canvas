@@ -1,11 +1,13 @@
 import asyncio
+import os
+import sys
 from logging.config import fileConfig
+
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
+
 from alembic import context
-import os
-import sys
 
 # Add the project root to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
@@ -13,7 +15,19 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 # Import your models and database configuration
 from app.core.config import settings
 from app.db.session import Base
-from app.models import user, media, transcript, workspace, asset, conversation, message  # Import all models
+from app.models import (
+    asset,
+    board,
+    collection,
+    conversation,
+    knowledge_base,
+    media,
+    message,
+    otp,
+    transcript,
+    user,
+    workspace,
+)  # Import all models
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
