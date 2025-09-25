@@ -591,6 +591,111 @@ async def add_document_from_file(
         raise HTTPException(status_code=500, detail=f"Failed to add file document: {str(e)}")
 
 
+@router.post("/knowledge-bases/{kb_name}/documents/image")
+async def add_image_file(
+    kb_name: str, 
+    file: UploadFile = File(...),
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """Add an image to the knowledge base from an uploaded file using Extractor."""
+    try:
+        kb, vector_store = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
+        
+        # Import required services for image processing
+        from datetime import datetime
+
+        from engine.rag.document_splitter import DocumentSplitter
+        from engine.services.extractor import Extractor
+        
+        start_time = datetime.now()
+        
+        # Validate file type
+        allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+        file_extension = os.path.splitext(file.filename)[1].lower()
+        
+        if file_extension not in allowed_extensions:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Unsupported image type: {file_extension}. Allowed types: {', '.join(allowed_extensions)}"
+            )
+        
+        # Create temporary file to save uploaded content
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+            # Read and write file content
+            content = await file.read()
+            temp_file.write(content)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Initialize extractor and splitter
+            extractor = Extractor()
+            splitter = DocumentSplitter()
+            
+            # Process the image using the new uploaded image function
+            logger.info(f"Processing uploaded image: {file.filename}")
+            extracted_content = extractor.process_uploaded_image(temp_file_path, file.filename)
+            
+            if not extracted_content.get("success", False):
+                error_msg = extracted_content.get("error_message", "Unknown extraction error")
+                logger.error(f"Image extraction failed for {file.filename}: {error_msg}")
+                raise HTTPException(status_code=400, detail=f"Failed to extract image content: {error_msg}")
+            
+            # Override the source_url to use the original filename instead of temp path
+            extracted_content["url"] = file.filename
+            if "metadata" not in extracted_content:
+                extracted_content["metadata"] = {}
+            extracted_content["metadata"]["title"] = file.filename
+            
+            # Split content into chunks
+            logger.info(f"Splitting image content into chunks...")
+            chunks = splitter.split_extracted_content(extracted_content)
+            
+            if not chunks:
+                error_msg = "No content could be extracted from the image for chunking"
+                logger.warning(f"No chunks created for image {file.filename}: {error_msg}")
+                raise HTTPException(status_code=400, detail=error_msg)
+            
+            # Prepare texts and metadata for vector store
+            texts = [chunk.text for chunk in chunks]
+            metadatas = []
+            
+            for chunk in chunks:
+                metadata = chunk.metadata.copy()
+                # Add user_id and original filename to metadata
+                metadata['user_id'] = current_user_id
+                metadata['original_filename'] = file.filename
+                metadata['content_type'] = 'uploaded_image'
+                metadatas.append(metadata)
+            
+            # Add to vector store
+            logger.info(f"Adding {len(chunks)} image chunks to vector store...")
+            document_ids = vector_store.add_documents(texts, metadatas)
+            
+            processing_time = (datetime.now() - start_time).total_seconds()
+            
+            return {
+                "message": "Image document added successfully",
+                "filename": file.filename,
+                "status": "completed",
+                "chunks_created": len(chunks),
+                "processing_time": processing_time,
+                "document_ids": document_ids,
+                "image_text": extracted_content.get("transcriptions", {}).get("text", "")
+            }
+            
+        finally:
+            # Clean up temporary file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding image document: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to add image document: {str(e)}")
+
+
 @router.post("/knowledge-bases/{kb_name}/documents/audio")
 async def add_audio_file(
     kb_name: str, 
