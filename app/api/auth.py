@@ -67,7 +67,7 @@ async def google_login():
         "scope": "openid email profile",
         "response_type": "code",
         "state": state,
-        "access_type": "offline",
+        # "access_type": "offline",
         "prompt": "consent"
     }
     
