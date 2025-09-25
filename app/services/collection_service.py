@@ -108,26 +108,34 @@ class CollectionService:
         workspace_id: int, 
         collection_id: int
     ) -> bool:
-        """Delete a collection (soft delete)."""
-        collection = await self.get_collection(db, workspace_id, collection_id)
+        """Permanently delete a collection and all its linked assets."""
+        from app.models.asset import Asset
+        
+        collection = await self.get_collection(db, workspace_id, collection_id, include_assets=True)
         if not collection:
             return False
         
-        collection.is_active = False
+        # Delete all assets linked to this collection
+        if collection.assets:
+            for asset in collection.assets:
+                await db.delete(asset)
+        
+        # Delete the collection itself
+        await db.delete(collection)
         await db.commit()
         return True
 
-    async def hard_delete_collection(
+    async def soft_delete_collection(
         self, 
         db: AsyncSession, 
         workspace_id: int, 
         collection_id: int
     ) -> bool:
-        """Permanently delete a collection and all its assets."""
-        collection = await self.get_collection(db, workspace_id, collection_id, include_assets=True)
+        """Soft delete a collection (set is_active to False)."""
+        collection = await self.get_collection(db, workspace_id, collection_id)
         if not collection:
             return False
         
-        await db.delete(collection)
+        collection.is_active = False
         await db.commit()
         return True

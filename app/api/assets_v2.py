@@ -72,11 +72,17 @@ async def delete_collection(
     current_user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a collection and all its assets."""
-    # Get collection first to check if it's linked to a knowledge base
+    """Permanently delete a collection and all its assets."""
+    # Get collection first to check if it's linked to a knowledge base and get asset file paths
     collection = await collection_service.get_collection(db, workspace_id, collection_id, include_assets=True)
     if not collection:
         raise HTTPException(status_code=404, detail="Collection not found")
+    
+    # Store file paths for cleanup before deletion
+    file_paths_to_delete = []
+    for asset in collection.assets:
+        if asset.file_path:
+            file_paths_to_delete.append(asset.file_path)
     
     # If collection is linked to a knowledge base, unlink it first to remove chunks
     # EXACTLY like agent.py delete_document logic
@@ -95,10 +101,19 @@ async def delete_collection(
             print(f"Error deleting documents: {str(e)}")
             # Continue with collection deletion even if KB cleanup fails
     
-    # Delete collection (soft delete)
+    # Delete collection and all its assets permanently
     success = await collection_service.delete_collection(db, workspace_id, collection_id)
     if not success:
         raise HTTPException(status_code=404, detail="Collection not found")
+    
+    # Delete files from Cloudinary after successful database deletion
+    for file_path in file_paths_to_delete:
+        try:
+            await delete_file_from_cloudinary(file_path)
+        except Exception as e:
+            # Log the error but don't fail the request
+            print(f"Warning: Failed to delete file from Cloudinary: {e}")
+    
     return None
 
 
@@ -298,6 +313,49 @@ async def list_collection_assets(
 ):
     """List assets in a specific collection."""
     return await list_workspace_assets(workspace_id, asset_type, collection_id, current_user_id, db)
+
+
+# -------------------------
+# Asset-Collection Linking Endpoints
+# -------------------------
+
+@router.post("/assets/{asset_id}/link-to-collection/{collection_id}")
+async def link_asset_to_collection(
+    workspace_id: int,
+    asset_id: int,
+    collection_id: int,
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Link an existing asset to a collection."""
+    try:
+        result = await asset_service.link_asset_to_collection(
+            db, workspace_id, asset_id, collection_id, current_user_id
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to link asset to collection: {str(e)}")
+
+
+@router.delete("/assets/{asset_id}/unlink-from-collection")
+async def unlink_asset_from_collection(
+    workspace_id: int,
+    asset_id: int,
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Unlink an asset from its collection."""
+    try:
+        result = await asset_service.unlink_asset_from_collection(
+            db, workspace_id, asset_id, current_user_id
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to unlink asset from collection: {str(e)}")
 
 
 # -------------------------

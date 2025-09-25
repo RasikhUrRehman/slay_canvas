@@ -166,3 +166,86 @@ class AssetService:
         await db.delete(asset)
         await db.commit()
         return True
+
+    async def link_asset_to_collection(
+        self,
+        db: AsyncSession,
+        workspace_id: int,
+        asset_id: int,
+        collection_id: int,
+        user_id: int,
+    ) -> dict:
+        """Link an existing asset to a collection."""
+        # Get the asset
+        asset = await self.get_asset(db, workspace_id, asset_id)
+        if not asset:
+            raise ValueError("Asset not found")
+        
+        # Verify asset ownership
+        if asset.user_id != user_id:
+            raise ValueError("Access denied: You don't own this asset")
+        
+        # Get the collection
+        collection = await db.get(CollectionModel, collection_id)
+        if not collection or collection.workspace_id != workspace_id:
+            raise ValueError("Collection not found or doesn't belong to this workspace")
+        
+        # Verify collection ownership
+        if collection.user_id != user_id:
+            raise ValueError("Access denied: You don't own this collection")
+        
+        # Check if asset is already linked to this collection
+        if asset.collection_id == collection_id:
+            raise ValueError("Asset is already linked to this collection")
+        
+        # Link the asset to the collection
+        old_collection_id = asset.collection_id
+        asset.collection_id = collection_id
+        
+        await db.commit()
+        await db.refresh(asset)
+        
+        return {
+            "message": f"Asset '{asset.title or asset.id}' linked to collection '{collection.name}'",
+            "asset_id": asset.id,
+            "collection_id": collection_id,
+            "previous_collection_id": old_collection_id
+        }
+
+    async def unlink_asset_from_collection(
+        self,
+        db: AsyncSession,
+        workspace_id: int,
+        asset_id: int,
+        user_id: int,
+    ) -> dict:
+        """Unlink an asset from its collection."""
+        # Get the asset
+        asset = await self.get_asset(db, workspace_id, asset_id)
+        if not asset:
+            raise ValueError("Asset not found")
+        
+        # Verify asset ownership
+        if asset.user_id != user_id:
+            raise ValueError("Access denied: You don't own this asset")
+        
+        # Check if asset is linked to a collection
+        if not asset.collection_id:
+            raise ValueError("Asset is not linked to any collection")
+        
+        # Get collection info for response message
+        collection = await db.get(CollectionModel, asset.collection_id)
+        collection_name = collection.name if collection else "Unknown Collection"
+        old_collection_id = asset.collection_id
+        
+        # Unlink from collection
+        asset.collection_id = None
+        
+        await db.commit()
+        await db.refresh(asset)
+        
+        return {
+            "message": f"Asset '{asset.title or asset.id}' unlinked from collection '{collection_name}'",
+            "asset_id": asset.id,
+            "previous_collection_id": old_collection_id
+        }
