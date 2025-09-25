@@ -448,18 +448,18 @@ class AssetKnowledgeService:
         vector_store,
         splitter: DocumentSplitter
     ) -> int:
-        """Process document file by downloading from Cloudinary and extracting text using the same logic as agent.py"""
+        """Process document or image file by downloading from Cloudinary and extracting content using the extractor"""
         
         try:
             import os
             import tempfile
-
             import requests
+            from engine.services.extractor import Extractor
             
-            logger.info(f"Processing document file: {asset.file_path}")
+            logger.info(f"Processing file: {asset.file_path}")
             
             # Download the file from Cloudinary URL to a temporary file
-            logger.info(f"Downloading document from: {asset.file_path}")
+            logger.info(f"Downloading file from: {asset.file_path}")
             response = requests.get(asset.file_path, timeout=30)
             response.raise_for_status()
             
@@ -473,10 +473,13 @@ class AssetKnowledgeService:
                 if not file_extension:
                     file_extension = '.pdf'  # Default to PDF
             
-            # Validate file type
-            allowed_extensions = {'.pdf', '.docx', '.txt', '.doc'}
+            # Validate file type - now includes both documents and images
+            document_extensions = {'.pdf', '.docx', '.txt', '.doc'}
+            image_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg'}
+            allowed_extensions = document_extensions | image_extensions
+            
             if file_extension not in allowed_extensions:
-                raise ValueError(f"Unsupported file type: {file_extension}. Allowed types: {', '.join(allowed_extensions)}")
+                raise ValueError(f"Unsupported file type: {file_extension}. Allowed types: {', '.join(sorted(allowed_extensions))}")
             
             # Save to temporary file
             with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
@@ -484,46 +487,54 @@ class AssetKnowledgeService:
                 temp_file_path = temp_file.name
             
             try:
-                # Initialize document processor - same as agent.py
-                from engine.processors.document_processor import DocumentProcessor
-                doc_processor = DocumentProcessor(
-                    chunk_size=kb.chunk_size,
-                    chunk_overlap=kb.chunk_overlap
-                )
+                # Initialize extractor
+                extractor = Extractor()
                 
-                # Process the downloaded file - same as agent.py
-                logger.info("Processing document with document processor...")
-                processed_docs = doc_processor.process_file(temp_file_path)
+                # Process the downloaded file using extractor
+                logger.info("Processing file with extractor...")
+                extraction_result = extractor.process_content(temp_file_path)
                 
-                if not processed_docs:
-                    error_msg = "No content could be extracted from document"
+                if not extraction_result or not extraction_result.get("success") or not extraction_result.get("transcriptions", {}).get("text"):
+                    error_msg = "No content could be extracted from file"
                     logger.warning(f"No content extracted for {asset.file_path}: {error_msg}")
                     raise ValueError(error_msg)
                 
-                # Prepare texts and metadata for vector store - same as agent.py
+                # Split the extracted content into chunks using DocumentSplitter
+                chunked_documents = splitter.split_extracted_content(extraction_result)
+                
+                if not chunked_documents:
+                    error_msg = "No chunks created from extracted content"
+                    logger.warning(f"No chunks created for {asset.file_path}: {error_msg}")
+                    raise ValueError(error_msg)
+                
+                # Prepare texts and metadata for vector store
                 texts = []
                 metadatas = []
                 
-                for chunk_text, chunk_metadata in processed_docs:
-                    # Create metadata with proper structure - same as agent.py
-                    metadata = {
+                # Determine content type based on file extension
+                content_type = "image" if file_extension in image_extensions else "document"
+                
+                for chunk_doc in chunked_documents:
+                    # Enhance the chunk metadata with asset-specific information
+                    enhanced_metadata = {
                         "source_url": asset.file_path,
-                        "title": asset.title or f"Document Asset {asset.id}",
-                        "content_type": "document",
+                        "title": asset.title or extraction_result.get("title") or f"{content_type.title()} Asset {asset.id}",
+                        "content_type": content_type,
                         "extraction_time": datetime.now().isoformat(),
                         "user_id": asset.user_id,
                         "asset_id": asset.id,
                         "asset_type": asset.type,
                         "workspace_id": asset.workspace_id,
-                        # Add document-specific metadata
-                        **chunk_metadata,
-                        **asset.asset_metadata
+                        # Add asset metadata
+                        **asset.asset_metadata,
+                        # Add chunk metadata from DocumentSplitter
+                        **chunk_doc.metadata
                     }
                     
-                    texts.append(chunk_text)
-                    metadatas.append(metadata)
+                    texts.append(chunk_doc.text)
+                    metadatas.append(enhanced_metadata)
                 
-                # Add to vector store - same as agent.py
+                # Add to vector store
                 logger.info(f"Adding {len(texts)} chunks to vector store...")
                 vector_store.add_documents(texts, metadatas)
                 
@@ -537,12 +548,8 @@ class AssetKnowledgeService:
                     pass
             
         except Exception as e:
-            logger.error(f"Error processing document file for asset {asset.id}: {str(e)}")
+            logger.error(f"Error processing file for asset {asset.id}: {str(e)}")
             raise
-            
-        except Exception as e:
-            logger.error(f"Error processing document file for asset {asset.id}: {str(e)}")
-            return 0
     
     async def _remove_asset_chunks(
         self,

@@ -965,6 +965,92 @@ class Extractor:
                 error_message=str(e)
             )
     
+    def process_uploaded_image(self, image_path: str, original_filename: str = None) -> Dict[str, Any]:
+        """
+        Process a directly uploaded image file.
+        
+        Args:
+            image_path: Path to the uploaded image file
+            original_filename: Original filename of the uploaded image
+            
+        Returns:
+            Dict containing transcription data with structure:
+            {
+                "url": str,
+                "content_type": str,
+                "transcriptions": {
+                    "text": str,
+                    "audio_transcription": str,
+                    "image_transcriptions": [{"url": str, "text": str}]
+                },
+                "metadata": dict,
+                "success": bool,
+                "error_message": str
+            }
+        """
+        logger.info(f"Processing uploaded image: {image_path}")
+        
+        try:
+            # Validate file exists
+            if not os.path.exists(image_path):
+                raise FileNotFoundError(f"Image file not found: {image_path}")
+            
+            # Validate file is an image
+            valid_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff')
+            if not image_path.lower().endswith(valid_extensions):
+                raise ValueError(f"Invalid image format. Supported formats: {valid_extensions}")
+            
+            # Process the image using image processor
+            image_text = self.image_processor.process(image_path)
+            
+            # Get file metadata
+            file_stats = os.stat(image_path)
+            file_size = file_stats.st_size
+            
+            # Use original filename if provided, otherwise use the file path
+            display_name = original_filename or os.path.basename(image_path)
+            
+            extracted_content = ExtractedContent(
+                url=image_path,
+                title=f"Uploaded Image: {display_name}",
+                content=image_text or "",
+                images=[image_path],
+                metadata={
+                    "original_filename": original_filename,
+                    "file_size": file_size,
+                    "file_path": image_path,
+                    "processed_at": datetime.now().isoformat()
+                },
+                transcriptions={
+                    "text": image_text or "",
+                    "audio_transcription": "",
+                    "image_transcriptions": [{"url": image_path, "text": image_text or ""}]
+                },
+                content_type="uploaded_image",
+                success=True
+            )
+            
+            # Convert to transcription format
+            return self._format_transcription_response(extracted_content)
+            
+        except Exception as e:
+            logger.error(f"Failed to process uploaded image: {e}")
+            return {
+                "url": image_path,
+                "content_type": "uploaded_image",
+                "transcriptions": {
+                    "text": "",
+                    "audio_transcription": "",
+                    "image_transcriptions": []
+                },
+                "metadata": {
+                    "original_filename": original_filename,
+                    "error": str(e)
+                },
+                "success": False,
+                "error_message": str(e)
+            }
+
     def _extract_video_direct(self, url: str) -> ExtractedContent:
         """Extract direct video content with audio transcription"""
         try:
