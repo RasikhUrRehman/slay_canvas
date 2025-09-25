@@ -110,7 +110,7 @@ router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 security = HTTPBearer()
 
 
-@router.post("/", response_model=Workspace, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=Workspace, status_code=status.HTTP_201_CREATED)
 async def create_workspace(
     request: WorkspaceCreate,
     credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -122,7 +122,7 @@ async def create_workspace(
     return await service.create_workspace(db, request, user_id)
 
 
-@router.get("/", response_model=List[Workspace])
+@router.get("", response_model=List[Workspace])
 async def list_workspaces(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db),
