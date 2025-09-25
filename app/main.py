@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer
+
 from app.api import router as api_router
 from app.core.config import settings
 
@@ -18,7 +19,13 @@ def create_app() -> FastAPI:
     # CORS middleware
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[settings.FRONTEND_ORIGIN, "http://localhost:3000", "http://localhost:8000"],
+        allow_origins=[
+            "http://localhost:3000",
+            "https://localhost:3000",
+            "http://d4036416b5dc.ngrok-free.app",
+            "https://d4036416b5dc.ngrok-free.app",
+            "*"  # Remove this in production
+        ],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
