@@ -49,6 +49,17 @@ class ConversationService:
         )
         return result.scalars().all()
     
+    async def get_conversations_by_knowledge_base(self, db: AsyncSession, knowledge_base_id: int, user_id: int, skip: int = 0, limit: int = 100) -> List[Conversation]:
+        """Get conversations for a knowledge base by user."""
+        result = await db.execute(
+            select(Conversation)
+            .where(Conversation.knowledge_base_id == knowledge_base_id, Conversation.user_id == user_id)
+            .order_by(desc(Conversation.updated_at))
+            .offset(skip)
+            .limit(limit)
+        )
+        return result.scalars().all()
+    
     async def create_conversation(self, db: AsyncSession, conversation_data: ConversationCreate, user_id: int) -> Conversation:
         """Create a new conversation."""
         conversation = Conversation(

@@ -82,6 +82,16 @@ class KnowledgeBaseInfo(BaseModel):
     stats: Dict[str, Any]
 
 
+class KnowledgeBaseWithConversations(BaseModel):
+    name: str
+    description: Optional[str]
+    document_count: int
+    chunk_count: int
+    created_at: str
+    stats: Dict[str, Any]
+    conversations: List[Dict[str, Any]]
+
+
 class AddDocumentRequest(BaseModel):
     url: str
 
@@ -252,20 +262,39 @@ async def list_knowledge_bases(
         raise HTTPException(status_code=500, detail=f"Failed to list knowledge bases: {str(e)}")
 
 
-@router.get("/knowledge-bases/{kb_name}", response_model=KnowledgeBaseInfo)
+@router.get("/knowledge-bases/{kb_name}", response_model=KnowledgeBaseWithConversations)
 async def get_knowledge_base(
     kb_name: str,
     current_user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get information about a specific knowledge base for the authenticated user."""
+    """Get information about a specific knowledge base with all its conversations for the authenticated user."""
     try:
         kb, vector_store = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
         
         # Get statistics from Milvus
         stats = await knowledge_base_service.get_knowledge_base_stats(kb)
         
-        return KnowledgeBaseInfo(
+        # Get all conversations for this knowledge base
+        conversations_db = await conversation_service.get_conversations_by_knowledge_base(
+            db, kb.id, current_user_id
+        )
+        
+        # Format conversations with their messages
+        conversations = []
+        for conv in conversations_db:
+            # Format messages for this conversation        
+            conversations.append({
+                "id": conv.id,
+                "conversation_name": conv.conversation_name,
+                "project_id": conv.project_id,
+                "knowledge_base_id": conv.knowledge_base_id,
+                "user_id": conv.user_id,
+                "created_at": conv.created_at.isoformat(),
+                "updated_at": conv.updated_at.isoformat(),
+            })
+        
+        return KnowledgeBaseWithConversations(
             name=kb.name,
             description=kb.description or f"Knowledge base: {kb.name}",
             document_count=stats.get("document_count", 0),
@@ -280,7 +309,8 @@ async def get_knowledge_base(
                 "is_active": kb.is_active,
                 "workspace_id": kb.workspace_id,
                 **stats.get("milvus_stats", {})
-            }
+            },
+            conversations=conversations
         )
         
     except HTTPException:
