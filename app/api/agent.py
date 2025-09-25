@@ -170,11 +170,18 @@ async def create_knowledge_base(
                 detail=f"Workspace '{request.project_name}' not found. Please create the workspace first."
             )
 
-        name = f"chat_{current_user_id}_{int(time.time())}"
+        # Count existing knowledge bases in this workspace for this user
+        existing_kbs = await knowledge_base_service.list_user_knowledge_bases(
+            db, current_user_id, workspace_id=workspace.id
+        )
+        kb_count = len(existing_kbs) + 1  # Next knowledge base number
+        
+        # Generate knowledge base name based on count
+        kb_name = f"kb_{current_user_id}_{kb_count}"
         
         # Create knowledge base data for service
         kb_create = KnowledgeBaseCreate(
-            name=name,
+            name=kb_name,
             description=request.description,
             chunk_size=request.chunk_size,
             chunk_overlap=request.chunk_overlap,
@@ -184,15 +191,16 @@ async def create_knowledge_base(
         # Create knowledge base using service
         kb = await knowledge_base_service.create_knowledge_base(db, kb_create, current_user_id)
         
-        logger.info(f"Created knowledge base: {request.name} for user {current_user_id}")
+        logger.info(f"Created knowledge base: {kb_name} for user {current_user_id} in workspace {workspace.id}")
         
         return {
-            "message": f"Knowledge base '{request.name}' created successfully",
-            "name": request.name,
+            "message": f"Knowledge base '{kb_name}' created successfully",
+            "name": kb_name,
             "project_name": request.project_name,
             "collection_name": kb.full_collection_name,
             "user_id": str(current_user_id),
-            "id": str(kb.id)
+            "id": str(kb.id),
+            "kb_count": str(kb_count)
         }
         
     except ValueError as e:
