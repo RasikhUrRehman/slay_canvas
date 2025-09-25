@@ -1095,6 +1095,250 @@ async def chat_agent(
         raise HTTPException(status_code=500, detail=f"Failed to process chat: {str(e)}")
 
 
+# @router.post("/knowledge-bases/{kb_name}/selective-search")
+# async def selective_search_agent(
+#     kb_name: str,
+#     request: SelectiveSearchRequest,
+#     current_user_id: int = Depends(get_current_user_id),
+#     db: AsyncSession = Depends(get_db)
+# ):
+#     """
+#     Chat with the agent using streaming response, searching only within specific documents.
+#     Creates a new conversation if conversation_id is not provided.
+#     Returns only the agent's answer without thinking steps.
+#     """
+#     try:
+#         conversation_id = request.conversation_id
+#         
+#         # If no conversation_id provided, create a new conversation
+#         if conversation_id is None:
+#             # Get the knowledge base first to link it to the conversation
+#             kb, _ = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
+#             
+#             # Use the knowledge base's workspace
+#             if not kb.workspace_id:
+#                 raise HTTPException(
+#                     status_code=400, 
+#                     detail=f"Knowledge base '{kb_name}' is not associated with any workspace"
+#                 )
+#             
+#             project_id = kb.workspace_id
+#             
+#             conversation_data = ConversationCreate(
+#                 conversation_name=f"Selective Search in {kb_name}",
+#                 project_id=project_id,
+#                 knowledge_base_id=kb.id  # Link conversation to knowledge base
+#             )
+#             conversation = await conversation_service.create_conversation(
+#                 db=db,
+#                 conversation_data=conversation_data,
+#                 user_id=current_user_id
+#             )
+#             conversation_id = conversation.id
+#         else:
+#             # Verify the conversation belongs to the current user
+#             conversation = await conversation_service.get_conversation_by_id(db, conversation_id)
+#             if not conversation or conversation.user_id != current_user_id:
+#                 raise HTTPException(status_code=404, detail="Conversation not found")
+#         
+#         # Save user message to database
+#         user_message_data = MessageCreate(
+#             content=request.message,
+#             role=MessageRole.user,
+#             conversation_id=conversation_id,
+#             user_id=current_user_id
+#         )
+#         user_message = await message_service.create_message(
+#             db=db,
+#             message_data=user_message_data
+#         )
+#         
+#         # Load conversation history (last 10 messages for context)
+#         conversation_with_messages = await conversation_service.get_conversation_by_id(db, conversation_id)
+#         conversation_history = []
+#         if conversation_with_messages and conversation_with_messages.messages:
+#             # Get last 10 messages, excluding the current user message
+#             recent_messages = conversation_with_messages.messages[-11:-1] if len(conversation_with_messages.messages) > 1 else []
+#             for msg in recent_messages:
+#                 # Convert database role to LLM API role
+#                 api_role = "assistant" if msg.role.value == "agent" else msg.role.value
+#                 conversation_history.append({
+#                     "role": api_role,
+#                     "content": msg.content
+#                 })
+#         
+#         # Get the knowledge base from database
+#         kb, vector_store = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
+#         
+#         # Filter documents by the provided titles
+#         all_documents = vector_store.list_all_documents()
+#         matching_source_urls = set()
+#         
+#         # If no document titles are provided or the list is empty, use all documents
+#         if not request.document_titles:
+#             # Add all document source URLs
+#             for _, metadata in all_documents:
+#                 matching_source_urls.add(metadata.get('source_url', ''))
+#         else:
+#             # Filter by specific document titles
+#             for _, metadata in all_documents:
+#                 doc_title = metadata.get('title', '').strip()
+#                 original_filename = metadata.get('original_filename', '').strip()
+#                 
+#                 # Check if any of the requested titles match this document
+#                 for requested_title in request.document_titles:
+#                     requested_title = requested_title.strip()
+#                     
+#                     # Match against title or original filename (case-insensitive)
+#                     if (doc_title and requested_title.lower() in doc_title.lower()) or \
+#                        (original_filename and requested_title.lower() in original_filename.lower()) or \
+#                        (requested_title.lower() == doc_title.lower()) or \
+#                        (requested_title.lower() == original_filename.lower()):
+#                         matching_source_urls.add(metadata.get('source_url', ''))
+#                         break
+#         
+#         # Create a custom agent that searches only within selected documents
+#         class SelectiveKnowledgeBaseAgent:
+#             def __init__(self, vector_store, selected_source_urls):
+#                 self.vector_store = vector_store
+#                 self.selected_source_urls = selected_source_urls
+#                 # Initialize the base agent for LLM functionality
+#                 collection_name = vector_store.collection_name
+#                 self.base_agent = KnowledgeBaseAgent(rag_collection_name=collection_name)
+#             
+#             async def process_query_stream(self, query, conversation_history=None):
+#                 """Process query with selective document filtering"""
+#                 if not self.selected_source_urls:
+#                     yield "No documents found in the knowledge base."
+#                     return
+#                 
+#                 # Convert set to list for the vector store method
+#                 source_urls_list = list(self.selected_source_urls)
+#                 if not source_urls_list or not any(url for url in source_urls_list):
+#                     yield "No valid source URLs found for filtering."
+#                     return
+#                 
+#                 # Perform filtered similarity search
+#                 try:
+#                     search_results = self.vector_store.similarity_search(
+#                         query=query,
+#                         k=5,
+#                         source_urls=source_urls_list
+#                     )
+#                     
+#                     if not search_results:
+#                         yield f"No relevant content found in the specified documents for the query: '{query}'"
+#                         return
+#                     
+#                     # Create context from search results (search_results is a list of tuples: (text, distance, metadata))
+#                     context_texts = [result[0] for result in search_results]  # Extract text from tuple
+#                     context = "\n\n".join(context_texts)
+#                     
+#                     # Generate response using the base agent's LLM with filtered context
+#                     try:
+#                         # Create a prompt with the filtered context
+#                         prompt = f"""Based on the following context from the selected documents, answer the user's question.
+# 
+#                             Context:
+#                             {context}
+# 
+#                             Question: {query}
+# 
+#                             Please provide a comprehensive answer based only on the information provided in the context above."""
+#                                 
+#                         # Use the base agent's LLM to generate response
+#                         llm_client = self.base_agent.llm_client
+#                         
+#                         # Prepare conversation history in the correct format
+#                         messages = []
+#                         if conversation_history:
+#                             for msg in conversation_history:
+#                                 messages.append({
+#                                     "role": msg["role"],
+#                                     "content": msg["content"]
+#                                 })
+#                         
+#                         # Add the current prompt
+#                         messages.append({
+#                             "role": "user",
+#                             "content": prompt
+#                         })
+#                         
+#                         # Stream response from LLM
+#                         stream = llm_client.chat.completions.create(
+#                             model=self.base_agent.model,
+#                             messages=messages,
+#                             max_tokens=self.base_agent.max_tokens,
+#                             temperature=self.base_agent.temperature,
+#                             stream=True
+#                         )
+#                         
+#                         for chunk in stream:
+#                             if chunk.choices[0].delta.content is not None:
+#                                 yield chunk.choices[0].delta.content
+#                                 
+#                     except Exception as llm_error:
+#                         logger.error(f"Error generating LLM response: {str(llm_error)}")
+#                         yield f"Error generating response: {str(llm_error)}"
+#                         
+#                 except Exception as e:
+#                     logger.error(f"Error in selective search: {str(e)}")
+#                     yield f"Error performing selective search: {str(e)}"
+#         
+#         # Initialize the selective agent
+#         agent = SelectiveKnowledgeBaseAgent(vector_store, matching_source_urls)
+#         
+#         async def generate_response():
+#             """Generate streaming response with only the agent's answer"""
+#             try:
+#                 full_response = ""
+#                 
+#                 # Stream the response from the agent
+#                 async for chunk in agent.process_query_stream(request.message, conversation_history):
+#                     if chunk:
+#                         full_response += chunk
+#                         # Send only the content without any thinking steps or metadata
+#                         yield f"data: {chunk}\n\n"
+#                         # Add 0.1 second delay for streaming effect
+#                         await asyncio.sleep(0.1)
+#                 
+#                 # Save agent response to database
+#                 agent_message_data = MessageCreate(
+#                     content=full_response,
+#                     role=MessageRole.agent,
+#                     conversation_id=conversation_id,
+#                     user_id=current_user_id
+#                 )
+#                 await message_service.create_message(
+#                     db=db,
+#                     message_data=agent_message_data
+#                 )
+#                 
+#                 # Send conversation_id in the final message for client reference
+#                 yield f"data: [CONVERSATION_ID:{conversation_id}]\n\n"
+#                 yield f"data: [DONE]\n\n"
+#                 
+#             except Exception as e:
+#                 logger.error(f"Error in streaming response: {str(e)}")
+#                 yield f"data: [ERROR: {str(e)}]\n\n"
+#         
+#         return StreamingResponse(
+#             generate_response(),
+#             media_type="text/plain",
+#             headers={
+#                 "Cache-Control": "no-cache",
+#                 "Connection": "keep-alive",
+#                 "Content-Type": "text/plain; charset=utf-8"
+#             }
+#         )
+#         
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.error(f"Error in selective search agent: {str(e)}")
+#         raise HTTPException(status_code=500, detail=f"Failed to process selective search: {str(e)}")
+
+
 @router.post("/knowledge-bases/{kb_name}/selective-search")
 async def selective_search_agent(
     kb_name: str,
@@ -1103,7 +1347,7 @@ async def selective_search_agent(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Chat with the agent using streaming response, searching only within specific documents.
+    Chat with the agent using OpenAI streaming response, searching only within specific documents.
     Creates a new conversation if conversation_id is not provided.
     Returns only the agent's answer without thinking steps.
     """
@@ -1197,110 +1441,73 @@ async def selective_search_agent(
                         matching_source_urls.add(metadata.get('source_url', ''))
                         break
         
-        # Create a custom agent that searches only within selected documents
-        class SelectiveKnowledgeBaseAgent:
-            def __init__(self, vector_store, selected_source_urls):
-                self.vector_store = vector_store
-                self.selected_source_urls = selected_source_urls
-                # Initialize the base agent for LLM functionality
-                collection_name = vector_store.collection_name
-                self.base_agent = KnowledgeBaseAgent(rag_collection_name=collection_name)
-            
-            async def process_query_stream(self, query, conversation_history=None):
-                """Process query with selective document filtering"""
-                if not self.selected_source_urls:
-                    yield "No documents found in the knowledge base."
-                    return
-                
-                # Convert set to list for the vector store method
-                source_urls_list = list(self.selected_source_urls)
-                if not source_urls_list or not any(url for url in source_urls_list):
-                    yield "No valid source URLs found for filtering."
-                    return
-                
-                # Perform filtered similarity search
-                try:
-                    search_results = self.vector_store.similarity_search(
-                        query=query,
-                        k=5,
-                        source_urls=source_urls_list
-                    )
-                    
-                    if not search_results:
-                        yield f"No relevant content found in the specified documents for the query: '{query}'"
-                        return
-                    
-                    # Create context from search results (search_results is a list of tuples: (text, distance, metadata))
-                    context_texts = [result[0] for result in search_results]  # Extract text from tuple
-                    context = "\n\n".join(context_texts)
-                    
-                    # Generate response using the base agent's LLM with filtered context
-                    try:
-                        # Create a prompt with the filtered context
-                        prompt = f"""Based on the following context from the selected documents, answer the user's question.
+        # Create agent for the knowledge base
+        collection_name = vector_store.collection_name
+        agent = KnowledgeBaseAgent(rag_collection_name=collection_name)
+        
+        # Perform filtered similarity search
+        if not matching_source_urls:
+            raise HTTPException(status_code=404, detail="No documents found matching the specified titles")
+        
+        source_urls_list = list(matching_source_urls)
+        search_results = vector_store.similarity_search(
+            query=request.message,
+            k=5,
+            source_urls=source_urls_list
+        )
+        
+        if not search_results:
+            raise HTTPException(status_code=404, detail=f"No relevant content found in the specified documents for the query: '{request.message}'")
+        
+        # Create context from search results
+        context_texts = [result[0] for result in search_results]  # Extract text from tuple
+        context = "\n\n".join(context_texts)
+        
+        # Create a prompt with the filtered context
+        prompt = f"""Based on the following context from the selected documents, answer the user's question.
 
 Context:
 {context}
 
-Question: {query}
+Question: {request.message}
 
 Please provide a comprehensive answer based only on the information provided in the context above."""
-                        
-                        # Use the base agent's LLM to generate response
-                        llm_client = self.base_agent.llm_client
-                        
-                        # Prepare conversation history in the correct format
-                        messages = []
-                        if conversation_history:
-                            for msg in conversation_history:
-                                messages.append({
-                                    "role": msg["role"],
-                                    "content": msg["content"]
-                                })
-                        
-                        # Add the current prompt
-                        messages.append({
-                            "role": "user",
-                            "content": prompt
-                        })
-                        
-                        # Stream response from LLM
-                        stream = llm_client.chat.completions.create(
-                            model=self.base_agent.model,
-                            messages=messages,
-                            max_tokens=self.base_agent.max_tokens,
-                            temperature=self.base_agent.temperature,
-                            stream=True
-                        )
-                        
-                        for chunk in stream:
-                            if chunk.choices[0].delta.content is not None:
-                                yield chunk.choices[0].delta.content
-                                
-                    except Exception as llm_error:
-                        logger.error(f"Error generating LLM response: {str(llm_error)}")
-                        yield f"Error generating response: {str(llm_error)}"
-                        
-                except Exception as e:
-                    logger.error(f"Error in selective search: {str(e)}")
-                    yield f"Error performing selective search: {str(e)}"
         
-        # Initialize the selective agent
-        agent = SelectiveKnowledgeBaseAgent(vector_store, matching_source_urls)
+        # Prepare conversation history in the correct format
+        messages = []
+        if conversation_history:
+            for msg in conversation_history:
+                messages.append({
+                    "role": msg["role"],
+                    "content": msg["content"]
+                })
         
+        # Add the current prompt
+        messages.append({
+            "role": "user",
+            "content": prompt
+        })
+        
+        # Create streaming response generator using OpenAI streaming
         async def generate_response():
-            """Generate streaming response with only the agent's answer"""
             try:
                 full_response = ""
                 
-                # Stream the response from the agent
-                async for chunk in agent.process_query_stream(request.message, conversation_history):
-                    if chunk:
-                        full_response += chunk
-                        # Send only the content without any thinking steps or metadata
-                        yield f"data: {chunk}\n\n"
-                        # Add 0.1 second delay for streaming effect
-                        await asyncio.sleep(0.1)
+                # Use OpenAI streaming directly
+                stream = agent.llm_client.chat.completions.create(
+                    model=agent.model,
+                    messages=messages,
+                    max_tokens=agent.max_tokens,
+                    temperature=agent.temperature,
+                    stream=True
+                )
+                
+                # Stream response chunks
+                for chunk in stream:
+                    if chunk.choices[0].delta.content is not None:
+                        content = chunk.choices[0].delta.content
+                        full_response += content
+                        yield f"data: {content}\n\n"
                 
                 # Save agent response to database
                 agent_message_data = MessageCreate(
@@ -1324,11 +1531,11 @@ Please provide a comprehensive answer based only on the information provided in 
         
         return StreamingResponse(
             generate_response(),
-            media_type="text/plain",
+            media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-                "Content-Type": "text/plain; charset=utf-8"
+                "Content-Type": "text/event-stream"
             }
         )
         
