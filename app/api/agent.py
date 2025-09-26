@@ -1842,34 +1842,29 @@ Generate your response now:"""
         )
         
         # Initialize the agent for idea generation
-        collection_name = vector_store.collection_name
-        agent = KnowledgeBaseAgent(rag_collection_name=collection_name)
+        agent = KnowledgeBaseAgent(vector_store)
         
         async def generate_response():
             """Generate streaming response with the generated idea"""
             try:
                 full_response = ""
                 
-                # Use OpenAI streaming directly like in selective search
-                stream = agent.llm_client.chat.completions.create(
-                    model=agent.model,
+                # Use the agent's LLM client directly for idea generation
+                async for chunk in agent.llm_client.stream_completion(
                     messages=[{"role": "user", "content": idea_prompt}],
                     max_tokens=request.max_length,
-                    temperature=0.7,  # Higher temperature for more creativity
-                    stream=True
-                )
-                
-                # Stream response chunks
-                for chunk in stream:
-                    if chunk.choices[0].delta.content is not None:
-                        content = chunk.choices[0].delta.content
-                        full_response += content
-                        yield f"data: {content}\n\n"
+                    temperature=0.7  # Higher temperature for more creativity
+                ):
+                    if chunk:
+                        full_response += chunk
+                        yield f"data: {chunk}\n\n"
+                        # Add 0.1 second delay for streaming effect
+                        await asyncio.sleep(0.1)
                 
                 # Save agent response to database
                 agent_message_data = MessageCreate(
                     content=full_response,
-                    role=MessageRole.agent,
+                    role=MessageRole.AGENT,
                     conversation_id=conversation_id,
                     user_id=current_user_id
                 )
@@ -1901,7 +1896,6 @@ Generate your response now:"""
     except Exception as e:
         logger.error(f"Error in generate idea: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to generate idea: {str(e)}")
-
 
 @router.get("/health")
 async def health_check():
