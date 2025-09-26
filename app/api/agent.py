@@ -174,9 +174,24 @@ async def create_knowledge_base(
         existing_kbs = await knowledge_base_service.list_user_knowledge_bases(
             db, current_user_id, workspace_id=workspace.id
         )
-        kb_count = len(existing_kbs) + 1  # Next knowledge base number
         
-        # Generate knowledge base name based on count
+        # Find the next available KB number by checking existing names
+        existing_numbers = set()
+        for kb in existing_kbs:
+            # Extract number from kb names like "kb_2_1", "kb_2_2", etc.
+            if kb.name.startswith(f"kb_{current_user_id}_"):
+                try:
+                    number_part = kb.name.split(f"kb_{current_user_id}_")[1]
+                    existing_numbers.add(int(number_part))
+                except (IndexError, ValueError):
+                    continue
+        
+        # Find the next available number
+        kb_count = 1
+        while kb_count in existing_numbers:
+            kb_count += 1
+        
+        # Generate knowledge base name based on next available number
         kb_name = f"kb_{current_user_id}_{kb_count}"
         
         # Create knowledge base data for service
