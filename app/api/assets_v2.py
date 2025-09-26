@@ -152,7 +152,9 @@ async def delete_collection(
             # Log the error but don't fail the request
             print(f"Warning: Failed to delete file from Cloudinary: {e}")
     
-    return None
+    return {
+        "message": "Collection and its assets deleted successfully"
+    }
 
 
 # -------------------------
@@ -307,7 +309,9 @@ async def delete_asset(
             # Log the error but don't fail the request
             print(f"Warning: Failed to delete file from Cloudinary: {e}")
     
-    return None
+    return {
+        "message": "Asset deleted successfully"
+    }
 
 
 # -------------------------
