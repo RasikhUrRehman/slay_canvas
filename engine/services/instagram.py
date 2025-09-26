@@ -56,8 +56,4 @@ if __name__ == "__main__":
     url = "https://www.instagram.com/reel/DMDPPJSuZR4/?utm_source=ig_web_copy_link"#"https://www.instagram.com/reel/DOY2a8BkoYx/?utm_source=ig_web_copy_link&igsh=cG1zZ3JsMzc5bzA5" #"https://www.instagram.com/p/DOqbj1sjEjk/?utm_source=ig_web_copy_link&igsh=MTAwaGt4Y3U0eDdreA=="  
     media = get_instagram_media_urls(url)
     print(media)
-    if media:
-        print(media['images'][0])
-        image_processor = ImageProcessor(settings.API_NINJAS_KEY)
-        text = image_processor.process(media['images'][0])
-        print(text)
+    

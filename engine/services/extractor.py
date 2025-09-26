@@ -440,11 +440,7 @@ class Extractor:
             print("using instagram")
             # Use the Instagram processor to get media URLs
             media_urls = get_instagram_media_urls(url)
-            print("+"*20)
-            if media_urls:
-                print(media_urls.get("images", []))
-            else:
-                print("media_urls is None")
+            print(media_urls)
             print("+"*20)
             if not media_urls:
                 raise ValueError(f"Failed to extract Instagram media URLs {media_urls}")
@@ -1155,9 +1151,10 @@ def main():
         #"https://www.instagram.com/reel/DOvPrnYjZPZ/?utm_source=ig_web_copy_link&igsh=MXdodmVjMG56MXVybA==", #video
         #"https://www.instagram.com/reel/DHECrYAzKoa/?utm_source=ig_web_copy_link&igsh=dTFzMzdyb3R0YTVv",
         #"https://www.instagram.com/reel/DOY2a8BkoYx/?utm_source=ig_web_copy_link&igsh=cG1zZ3JsMzc5bzA5",
+        "https://www.instagram.com/reel/DMDPPJSuZR4/?utm_source=ig_web_copy_link",
         #"uploads/video_WordPress Blog & n8n Automation for Beginners Step-by-Step Guide.mp4",
         #"uploads/audio_Ed Sheeran - Perfect (Lyrics).m4a",
-        "https://www.youtube.com/watch?v=ba7mB8oueCY&list=RDba7mB8oueCY&start_radio=1"
+        #"https://www.youtube.com/watch?v=ba7mB8oueCY&list=RDba7mB8oueCY&start_radio=1"
         #"uploads/pic2.png"
         #"uploads/audio_Lewis Capaldi - Someone You Loved (Lyrics).m4a",
         #"hello hi there",    
