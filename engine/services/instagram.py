@@ -46,7 +46,7 @@ def get_instagram_media_urls(post_url):
                 else:
                     media_urls["images"].append(node.display_url)
 
-        return media_urls, post_url
+        return media_urls, post
 
     except Exception as e:
         print(f"Error: {e}")
