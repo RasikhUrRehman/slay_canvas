@@ -440,7 +440,9 @@ class Extractor:
             print("using instagram")
             # Use the Instagram processor to get media URLs
             media_urls = get_instagram_media_urls(url)
-            
+            print("+"*20)
+            print(media_urls.get("images"))
+            print("+"*20)
             if not media_urls:
                 raise ValueError("Failed to extract Instagram media URLs")
             
@@ -450,16 +452,29 @@ class Extractor:
                 raise ValueError("Invalid Instagram URL")
             
             shortcode = shortcode_match.group(1)
-            
+            print("Shortcode", shortcode)
+            print("Fetching post metadata")
             # Use instaloader for metadata
-            L = instaloader.Instaloader()
-            post = instaloader.Post.from_shortcode(L.context, shortcode)
-            
+            # L = instaloader.Instaloader()
+            # L.login("spodermaanle", "*090078601#")
+            # L.save_session_to_file("session-file")
+
+            # L.load_session_from_file("spodermaanle", filename="session-file")
+
+
+            # post = instaloader.Post.from_shortcode(L.context, shortcode)
+            # print("="*20)
+            # print("POst ,", post)
             # Process images with image processor
+            post = None # TODO: fix the image metadata
+            
+
             image_transcriptions = []
             for image_url in media_urls.get("images", []):
                 try:
                     image_text = self.image_processor.process(image_url)
+                    print("Image text")
+                    print(image_text)
                     if image_text:
                         image_transcriptions.append({
                             "url": image_url,
@@ -482,8 +497,8 @@ class Extractor:
             
             # Combine all transcriptions
             all_text = []
-            if post.caption:
-                all_text.append(post.caption)
+            # if post.caption:
+            #     all_text.append(post.caption)
             for img_trans in image_transcriptions:
                 all_text.append(f"Image Text: {img_trans['text']}")
             for audio_text in audio_transcriptions:
@@ -491,18 +506,18 @@ class Extractor:
             
             return ExtractedContent(
                 url=url,
-                title=f"Instagram post by @{post.owner_username}",
-                content=post.caption or "",
+                title= "insta post", # f"Instagram post by @{post.owner_username}",
+                content= "", # post.caption or "",
                 images=media_urls.get("images", []),
                 videos=media_urls.get("videos", []),
-                metadata={
-                    "username": post.owner_username,
-                    "likes": post.likes,
-                    "comments": post.comments,
-                    "date": str(post.date),
-                    "hashtags": post.caption_hashtags,
-                    "mentions": post.caption_mentions
-                },
+                metadata= None, # {
+                #     "username": post.owner_username,
+                #     "likes": post.likes,
+                #     "comments": post.comments,
+                #     "date": str(post.date),
+                #     "hashtags": post.caption_hashtags,
+                #     "mentions": post.caption_mentions
+                # },
                 transcriptions={
                     "text": "\n".join(all_text),
                     "audio_transcription": "\n".join(audio_transcriptions),
@@ -1136,9 +1151,11 @@ def main():
         #"https://www.instagram.com/reel/DHECrYAzKoa/?utm_source=ig_web_copy_link&igsh=dTFzMzdyb3R0YTVv",
         #"https://www.instagram.com/reel/DOY2a8BkoYx/?utm_source=ig_web_copy_link&igsh=cG1zZ3JsMzc5bzA5",
         #"uploads/video_WordPress Blog & n8n Automation for Beginners Step-by-Step Guide.mp4",
+        #"uploads/audio_Ed Sheeran - Perfect (Lyrics).m4a",
+        "https://www.youtube.com/watch?v=ba7mB8oueCY&list=RDba7mB8oueCY&start_radio=1"
         #"uploads/pic2.png"
         #"uploads/audio_Lewis Capaldi - Someone You Loved (Lyrics).m4a",
-        "hello hi there",    
+        #"hello hi there",    
     ]
     
     print("🚀 Testing Universal Content Extractor with Router")

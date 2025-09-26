@@ -232,7 +232,7 @@ class AssetKnowledgeService:
                         asset, vector_store, splitter
                     )
             
-            elif asset.type in ["image", "audio", "document"]:
+            elif asset.type in ["image", "audio", "document", "video"]:
                 # Process file content
                 if asset.file_path:
                     chunks_created = await self._process_file_content(
@@ -357,11 +357,85 @@ class AssetKnowledgeService:
         if asset.type == "audio":
             return await self._process_audio_file(asset, kb, vector_store, splitter)
         
+        # For video files, we need transcription (similar to audio)
+        elif asset.type == "video":
+            return await self._process_video_file(asset, kb, vector_store, splitter)
+        
         # For documents and images with text, extract content
         elif asset.type in ["document", "image"]:
             return await self._process_document_file(asset, kb, vector_store, splitter)
         
         return 0
+    
+    async def _process_video_file(
+        self,
+        asset: Asset,
+        kb: KnowledgeBase,
+        vector_store,
+        splitter: DocumentSplitter
+    ) -> int:
+        """Process video file by transcribing it using the same logic as agent.py"""
+        
+        try:
+            logger.info(f"Processing video file: {asset.file_path}")
+            
+            # Initialize extractor - same as agent.py
+            extractor = Extractor()
+            
+            # For Cloudinary URLs or direct URLs, use extractor.process_content
+            logger.info(f"Extracting content from: {asset.file_path}")
+            extracted_content = extractor.process_content(asset.file_path)
+            
+            if not extracted_content.get("success", False):
+                error_msg = extracted_content.get("error_message", "Unknown video processing error")
+                logger.error(f"Video processing failed for {asset.file_path}: {error_msg}")
+                raise ValueError(f"Failed to process video: {error_msg}")
+            
+            # Override the source_url to use the asset title instead of temp path
+            extracted_content["url"] = asset.title or f"Video Asset {asset.id}"
+            if "metadata" not in extracted_content:
+                extracted_content["metadata"] = {}
+            extracted_content["metadata"]["title"] = asset.title or f"Video Asset {asset.id}"
+            extracted_content["metadata"]["original_filename"] = asset.title or f"Video Asset {asset.id}"
+            
+            # Split content into chunks using document splitter
+            logger.info(f"Splitting video content into chunks...")
+            chunks = splitter.split_extracted_content(extracted_content)
+            
+            if not chunks:
+                error_msg = "No content could be extracted for chunking from video"
+                logger.warning(f"No chunks created for {asset.file_path}: {error_msg}")
+                raise ValueError(error_msg)
+            
+            # Prepare texts and metadata for batch insertion
+            texts = [chunk.text for chunk in chunks]
+            metadatas = []
+            
+            for chunk in chunks:
+                metadata = chunk.metadata.copy()
+                metadata.update({
+                    "source_url": asset.file_path,
+                    "content_type": "video",
+                    "original_filename": asset.title or f"Video Asset {asset.id}",
+                    "processing_method": "extractor_video_processing",
+                    "user_id": asset.user_id,
+                    "asset_id": asset.id,
+                    "asset_type": asset.type,
+                    "workspace_id": asset.workspace_id,
+                    **asset.asset_metadata
+                })
+                metadatas.append(metadata)
+            
+            # Add chunks to vector store
+            logger.info(f"Adding {len(chunks)} chunks to vector store...")
+            document_ids = vector_store.add_documents(texts, metadatas)
+            
+            logger.info(f"Successfully processed video file: {asset.file_path} with {len(chunks)} chunks")
+            return len(chunks)
+            
+        except Exception as e:
+            logger.error(f"Error processing video file {asset.file_path}: {str(e)}")
+            raise ValueError(f"Failed to process video file: {str(e)}")
     
     async def _process_audio_file(
         self,

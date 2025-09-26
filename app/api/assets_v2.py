@@ -204,7 +204,7 @@ async def upload_file_asset(
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a file asset and store in Cloudinary."""
-    if asset_type not in ["image", "audio", "document"]:
+    if asset_type not in ["image", "audio", "document", "video"]:
         raise HTTPException(status_code=400, detail="Invalid asset type for file upload")
     
     try:

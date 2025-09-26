@@ -630,7 +630,6 @@ async def add_document_from_file(
         logger.error(f"Error adding file document: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to add file document: {str(e)}")
 
-
 @router.post("/knowledge-bases/{kb_name}/documents/image")
 async def add_image_file(
     kb_name: str, 
@@ -832,6 +831,142 @@ async def add_audio_file(
     except Exception as e:
         logger.error(f"Error adding audio file: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to add audio file: {str(e)}")
+
+
+@router.post("/knowledge-bases/{kb_name}/documents/video")
+async def add_video_file(
+    kb_name: str, 
+    file: UploadFile = File(...),
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """Add a video file to the knowledge base by extracting text content using Extractor."""
+    try:
+        kb, vector_store = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
+        
+        # Import required services for video processing
+        from datetime import datetime
+        from engine.services.extractor import Extractor
+        
+        start_time = datetime.now()
+        
+        # Validate file type
+        allowed_extensions = {'.m4a', '.mp4', '.avi', '.mov', '.mkv', '.webm', '.m4v'}
+        file_extension = os.path.splitext(file.filename)[1].lower()
+        
+        if file_extension not in allowed_extensions:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Unsupported video file type: {file_extension}. Allowed types: {', '.join(allowed_extensions)}"
+            )
+        
+        # Create temporary file to save uploaded video content
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+            # Read and write file content
+            content = await file.read()
+            temp_file.write(content)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Initialize extractor
+            extractor = Extractor()
+            
+            # Process the video file using extractor
+            logger.info(f"Processing uploaded video file: {file.filename}")
+            
+            # Use extractor to process the video file directly
+            extracted_content = extractor.process_content(temp_file_path)
+            
+            if not extracted_content.get("success", False):
+                error_msg = extracted_content.get("error_message", "Unknown video processing error")
+                logger.error(f"Video processing failed for {file.filename}: {error_msg}")
+                raise HTTPException(status_code=400, detail=f"Failed to process video: {error_msg}")
+            
+            # Override the source_url to use the original filename instead of temp path
+            extracted_content["url"] = file.filename
+            if "metadata" not in extracted_content:
+                extracted_content["metadata"] = {}
+            extracted_content["metadata"]["title"] = file.filename
+            extracted_content["metadata"]["original_filename"] = file.filename
+            
+            # Initialize RAG system with the sanitized collection name
+            collection_name = kb_name.lower().replace(' ', '_')
+            rag_system = RAGSystem(collection_name=collection_name)
+            
+            # Split content into chunks using document splitter
+            from engine.rag.document_splitter import DocumentSplitter
+            splitter = DocumentSplitter()
+            
+            logger.info(f"Splitting video content into chunks...")
+            chunks = splitter.split_extracted_content(extracted_content)
+            
+            if not chunks:
+                error_msg = "No content could be extracted for chunking from video"
+                logger.warning(f"No chunks created for {file.filename}: {error_msg}")
+                raise HTTPException(status_code=400, detail=error_msg)
+            
+            # Prepare texts and metadata for batch insertion
+            texts = [chunk.text for chunk in chunks]
+            metadatas = []
+            
+            for chunk in chunks:
+                metadata = chunk.metadata.copy()
+                metadata.update({
+                    "source_url": file.filename,
+                    "content_type": "video",
+                    "original_filename": file.filename,
+                    "file_type": file_extension,
+                    "processing_method": "extractor_video_processing",
+                    "user_id": current_user_id
+                })
+                metadatas.append(metadata)
+            
+            # Add chunks to vector store
+            logger.info(f"Adding {len(chunks)} chunks to vector store...")
+            document_ids = vector_store.add_documents(texts, metadatas)
+            
+            processing_time = (datetime.now() - start_time).total_seconds()
+            
+            # Get transcription info from extracted content
+            transcriptions = extracted_content.get("transcriptions", {})
+            audio_transcription = transcriptions.get("audio_transcription", "")
+            text_content = transcriptions.get("text", "")
+            
+            return {
+                "message": "Video file processed and added successfully",
+                "filename": file.filename,
+                "file_type": file_extension,
+                "status": "completed",
+                "chunks_created": len(chunks),
+                "processing_time": processing_time,
+                "source_url": file.filename,
+                "video_processing_info": {
+                    "original_video_file": file.filename,
+                    "text_extracted": bool(text_content),
+                    "audio_transcribed": bool(audio_transcription),
+                    "processing_method": "extractor_service"
+                },
+                "content_summary": {
+                    "text_length": len(text_content),
+                    "audio_transcription_length": len(audio_transcription),
+                    "total_content_length": len(text_content) + len(audio_transcription)
+                }
+            }
+            
+        finally:
+            # Clean up temporary file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+            
+            # Close extractor resources
+            if 'extractor' in locals():
+                extractor.close()
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding video file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to add video file: {str(e)}")
 
 
 @router.get("/knowledge-bases/{kb_name}/documents")
