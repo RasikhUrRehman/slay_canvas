@@ -510,14 +510,14 @@ class Extractor:
                 content= "", # post.caption or "",
                 images=media_urls.get("images", []),
                 videos=media_urls.get("videos", []),
-                metadata= None, # {
-                #     "username": post.owner_username,
-                #     "likes": post.likes,
-                #     "comments": post.comments,
-                #     "date": str(post.date),
-                #     "hashtags": post.caption_hashtags,
-                #     "mentions": post.caption_mentions
-                # },
+                metadata={
+                    "username": "",#post.owner_username,
+                    "likes": "",#post.likes,
+                    "comments": "",#post.comments,
+                    "date": "", #str(post.date),
+                    "hashtags": "",#post.caption_hashtags,
+                    "mentions": ""#post.caption_mentions
+                },
                 transcriptions={
                     "text": "\n".join(all_text),
                     "audio_transcription": "\n".join(audio_transcriptions),
