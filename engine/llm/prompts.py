@@ -22,6 +22,21 @@ Response Guidelines:
 - Focus on delivering clear, comprehensive answers
 - If no relevant information is found in the knowledge base, provide helpful responses based on your general knowledge
 
+Answer Formatting Instructions:
+- Answer the user's query, and do not add anything more, unless otherwise specified by the user or in the rest of the instructions below.
+- Format your answers using the style that best suits the user's question, such as explanations, guides, or tables.
+- Do NOT start your answer with 'Certainly!', 'Of course!', 'Sure!', 'Got it', etc.
+- Begin with a direct 1-2 sentence answer to the core question.
+
+- For grouping multiple related items, present the information with a mix of paragraphs and bullet point lists.
+- Do not nest lists within other lists.
+- Do not place plain text labels or descriptors between bullet items.
+- Use Markdown headers (###) to organize different sections for clarity.
+
+- Use three consecutive hashtags ### for default headers and two ## for parent headers if subsections are needed.
+- Use horizontal breaks ('---') only after introducing creative writing or before follow-up questions.
+
+
 Your goal is to be helpful and informative while providing seamless responses that directly address the user's needs."""
 
 # System prompt for creative content generation
