@@ -91,6 +91,8 @@ class KnowledgeBaseWithConversations(BaseModel):
     created_at: str
     stats: Dict[str, Any]
     conversations: List[Dict[str, Any]]
+    assets: Optional[List[Dict[str, Any]]] = []
+    collections: Optional[List[Dict[str, Any]]] = []
 
 
 class AddDocumentRequest(BaseModel):
@@ -271,31 +273,63 @@ async def get_knowledge_base(
     current_user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get information about a specific knowledge base with all its conversations for the authenticated user."""
+    """Get information about a specific knowledge base with all its conversations, assets, and collections for the authenticated user."""
     try:
-        kb, vector_store = await _get_knowledge_base_from_db(kb_name, current_user_id, db)
+        # Get knowledge base with assets and collections
+        kb = await knowledge_base_service.get_knowledge_base_with_relations(db, kb_name, current_user_id)
+        
+        if not kb:
+            raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_name}' not found")
         
         # Get statistics from Milvus
         stats = await knowledge_base_service.get_knowledge_base_stats(kb)
         
-        # Get all conversations for this knowledge base
-        conversations_db = await conversation_service.get_conversations_by_knowledge_base(
-            db, kb.id, current_user_id
-        )
-        
-        # Format conversations with their messages
+        # Get all conversations for this knowledge base (already loaded via relations)
         conversations = []
-        for conv in conversations_db:
-            # Format messages for this conversation        
-            conversations.append({
-                "id": conv.id,
-                "conversation_name": conv.conversation_name,
-                "project_id": conv.project_id,
-                "knowledge_base_id": conv.knowledge_base_id,
-                "user_id": conv.user_id,
-                "created_at": conv.created_at.isoformat(),
-                "updated_at": conv.updated_at.isoformat(),
-            })
+        if kb.conversations:
+            for conv in kb.conversations:
+                conversations.append({
+                    "id": conv.id,
+                    "conversation_name": conv.conversation_name,
+                    "project_id": conv.project_id,
+                    "knowledge_base_id": conv.knowledge_base_id,
+                    "user_id": conv.user_id,
+                    "created_at": conv.created_at.isoformat(),
+                    "updated_at": conv.updated_at.isoformat(),
+                })
+
+        # Format assets
+        assets = []
+        if kb.assets:
+            for asset in kb.assets:
+                assets.append({
+                    "id": asset.id,
+                    "type": asset.type,
+                    "title": asset.title,
+                    "url": asset.url,
+                    "file_path": asset.file_path,
+                    "content": asset.content,
+                    "collection_id": asset.collection_id,
+                    "knowledge_base_id": asset.knowledge_base_id,
+                    "is_active": asset.is_active,
+                    "created_at": asset.created_at.isoformat() if asset.created_at else None,
+                })
+
+        # Format collections
+        collections = []
+        if kb.collections:
+            for collection in kb.collections:
+                # Count assets in this collection
+                asset_count = len([a for a in kb.assets if a.collection_id == collection.id])
+                collections.append({
+                    "id": collection.id,
+                    "name": collection.name,
+                    "description": collection.description,
+                    "knowledge_base_id": collection.knowledge_base_id,
+                    "is_active": collection.is_active,
+                    "created_at": collection.created_at.isoformat() if collection.created_at else None,
+                    "asset_count": asset_count,
+                })
         
         return KnowledgeBaseWithConversations(
             name=kb.name,
@@ -313,7 +347,9 @@ async def get_knowledge_base(
                 "workspace_id": kb.workspace_id,
                 **stats.get("milvus_stats", {})
             },
-            conversations=conversations
+            conversations=conversations,
+            assets=assets,
+            collections=collections
         )
         
     except HTTPException:

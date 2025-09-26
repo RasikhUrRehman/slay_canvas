@@ -98,6 +98,24 @@ class KnowledgeBaseService:
         )
         result = await db.execute(query)
         return result.scalar_one_or_none()
+
+    async def get_knowledge_base_with_relations(
+        self, 
+        db: AsyncSession, 
+        name: str, 
+        user_id: int
+    ) -> Optional[KnowledgeBase]:
+        """Get knowledge base by name for a specific user with assets and collections"""
+        query = select(KnowledgeBase).options(
+            selectinload(KnowledgeBase.assets),
+            selectinload(KnowledgeBase.collections),
+            selectinload(KnowledgeBase.conversations)
+        ).where(
+            KnowledgeBase.name == name,
+            KnowledgeBase.user_id == user_id
+        )
+        result = await db.execute(query)
+        return result.scalar_one_or_none()
     
     async def list_user_knowledge_bases(
         self, 
