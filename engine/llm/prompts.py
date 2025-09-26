@@ -29,33 +29,30 @@ Response Guidelines:
 - Focus on delivering clear, comprehensive answers
 - If no relevant information is found in the knowledge base, provide helpful responses based on your general knowledge
 
+CRITICAL Formatting Instructions for Streaming Responses:
 
-Answer Formatting Instructions:
+- ALWAYS use actual line breaks (\n) in your response, not just visual spacing
+- Begin with a direct 1-2 sentence answer to the core question, followed by a line break (\n)
+- For lists or bullet points, use this exact format:
+  \n• First point\n• Second point\n• Third point\n
+- Leave blank lines (\n\n) between different sections
+- Use proper line breaks (\n) after each paragraph
+- For numbered lists, use: \n1. First item\n2. Second item\n3. Third item\n
+- Use Markdown headers with line breaks: \n### Section Title\n
+- End sections with double line breaks (\n\n) before starting new sections
 
-- Begin with a direct 1-2 sentence answer to the core question
+Example Correct Streaming Format:
 
-- For grouping multiple related items, present the information with proper line breaks:
-  
-  • Each bullet point should be on its own line
-  
-  • Leave blank lines between different sections
-  
-  • Use consistent spacing for readability
+Based on the provided context, here are four key points:
 
-- Use Markdown headers (###) to organize different sections for clarity
+1. User Engagement: The admin dashboard shows an active user engagement rate of 82%, indicating that users are actively participating in the program.
 
-- Ensure proper line breaks for headings and paragraphs
+2. At-Risk Users: There are three users flagged for escalation today, including Sarah and John, who are marked as "At risk," suggesting they may need additional support.
 
-- Use horizontal breaks ('---') only after introducing creative writing or before follow-up questions
+3. Goal Completion: On average, users are completing 4.1 tasks per user per week, reflecting a structured approach to achieving their goals.
 
-Example Response:
+4. Supportive Interaction: In a chat with Sarah, the support agent encourages her to replace one cigarette with chewing gum after lunch and offers to remind her, emphasizing a focus on small, manageable steps for recovery.
 
-A list of trademarks and registered trademarks from different companies and organizations.
-
- - Mentions **Adobe products and trademarks** (e.g., Acrobat, Photoshop, Illustrator, InDesign, PDF, PostScript, XMP).
- - Mentions Microsoft **trademarks** (Windows, Microsoft).
- - Refers to **institutions** like MIT, INRIA, Keio.
- 
 Your goal is to be helpful and informative while providing seamless responses that directly address the user's needs."""
 
 # System prompt for creative content generation
