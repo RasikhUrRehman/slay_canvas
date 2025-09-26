@@ -1468,16 +1468,19 @@ async def selective_search_agent(
             for _, metadata in all_documents:
                 doc_title = metadata.get('title', '').strip()
                 original_filename = metadata.get('original_filename', '').strip()
+                source_url = metadata.get('source_url', '').strip()
                 
                 # Check if any of the requested titles match this document
                 for requested_title in request.document_titles:
                     requested_title = requested_title.strip()
                     
-                    # Match against title or original filename (case-insensitive)
+                    # Match against title, original filename, or source_url (case-insensitive)
                     if (doc_title and requested_title.lower() in doc_title.lower()) or \
                        (original_filename and requested_title.lower() in original_filename.lower()) or \
+                       (source_url and requested_title.lower() in source_url.lower()) or \
                        (requested_title.lower() == doc_title.lower()) or \
-                       (requested_title.lower() == original_filename.lower()):
+                       (requested_title.lower() == original_filename.lower()) or \
+                       (requested_title.lower() == source_url.lower()):
                         matching_source_urls.add(metadata.get('source_url', ''))
                         break
         
