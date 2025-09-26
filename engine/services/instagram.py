@@ -90,7 +90,7 @@ def get_instagram_media_urls(post_url, max_retries=3, retry_delay=2):
                         logger.info(f"Added sidecar image {i+1}: {node.display_url}")
 
             logger.info(f"Successfully extracted media URLs: {len(media_urls['images'])} images, {len(media_urls['videos'])} videos")
-            return media_urls, post
+            return media_urls
 
         except instaloader.exceptions.InstaloaderException as e:
             logger.error(f"Instaloader specific error on attempt {attempt + 1}: {str(e)}")

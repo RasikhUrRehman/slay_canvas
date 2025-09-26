@@ -439,11 +439,11 @@ class Extractor:
         try:
             print("using instagram")
             # Use the Instagram processor to get media URLs
-            media_urls, post = get_instagram_media_urls(url)
+            media_urls = get_instagram_media_urls(url)
             print(media_urls)
             print("+"*20)
             if not media_urls:
-                raise ValueError(f"Failed to extractadsfasdfasdfasdf Instagram media URLs {media_urls}, with url {url}, and post {post}")
+                raise ValueError(f"Failed to extractadsfasdfasdfasdf Instagram media URLs {media_urls}, with url {url}")
             
             # Extract shortcode for additional metadata
             shortcode_match = re.search(r'/(p|reel|tv)/([A-Za-z0-9_-]+)', url)
