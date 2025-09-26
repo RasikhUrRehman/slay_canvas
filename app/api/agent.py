@@ -169,30 +169,11 @@ async def create_knowledge_base(
                 status_code=404, 
                 detail=f"Workspace '{request.project_name}' not found. Please create the workspace first."
             )
-
-        # Count existing knowledge bases in this workspace for this user
-        existing_kbs = await knowledge_base_service.list_user_knowledge_bases(
-            db, current_user_id, workspace_id=workspace.id
-        )
         
-        # Find the next available KB number by checking existing names
-        existing_numbers = set()
-        for kb in existing_kbs:
-            # Extract number from kb names like "kb_2_1", "kb_2_2", etc.
-            if kb.name.startswith(f"kb_{current_user_id}_"):
-                try:
-                    number_part = kb.name.split(f"kb_{current_user_id}_")[1]
-                    existing_numbers.add(int(number_part))
-                except (IndexError, ValueError):
-                    continue
-        
-        # Find the next available number
-        kb_count = 1
-        while kb_count in existing_numbers:
-            kb_count += 1
-        
-        # Generate knowledge base name based on next available number
-        kb_name = f"kb_{current_user_id}_{kb_count}"
+        # Generate unique knowledge base name using UUID to avoid conflicts
+        import uuid
+        unique_id = str(uuid.uuid4())[:8]  # Use first 8 characters of UUID
+        kb_name = f"kb_{current_user_id}_{unique_id}"
         
         # Create knowledge base data for service
         kb_create = KnowledgeBaseCreate(
@@ -215,7 +196,7 @@ async def create_knowledge_base(
             "collection_name": kb.full_collection_name,
             "user_id": str(current_user_id),
             "id": str(kb.id),
-            "kb_count": str(kb_count)
+            "kb_count": str(0)
         }
         
     except ValueError as e:
