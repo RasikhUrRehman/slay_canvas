@@ -846,6 +846,7 @@ async def add_video_file(
         
         # Import required services for video processing
         from datetime import datetime
+
         from engine.services.extractor import Extractor
         
         start_time = datetime.now()
@@ -1841,29 +1842,34 @@ Generate your response now:"""
         )
         
         # Initialize the agent for idea generation
-        agent = KnowledgeBaseAgent(vector_store)
+        collection_name = vector_store.collection_name
+        agent = KnowledgeBaseAgent(rag_collection_name=collection_name)
         
         async def generate_response():
             """Generate streaming response with the generated idea"""
             try:
                 full_response = ""
                 
-                # Use the agent's LLM client directly for idea generation
-                async for chunk in agent.llm_client.stream_completion(
+                # Use OpenAI streaming directly like in selective search
+                stream = agent.llm_client.chat.completions.create(
+                    model=agent.model,
                     messages=[{"role": "user", "content": idea_prompt}],
                     max_tokens=request.max_length,
-                    temperature=0.7  # Higher temperature for more creativity
-                ):
-                    if chunk:
-                        full_response += chunk
-                        yield f"data: {chunk}\n\n"
-                        # Add 0.1 second delay for streaming effect
-                        await asyncio.sleep(0.1)
+                    temperature=0.7,  # Higher temperature for more creativity
+                    stream=True
+                )
+                
+                # Stream response chunks
+                for chunk in stream:
+                    if chunk.choices[0].delta.content is not None:
+                        content = chunk.choices[0].delta.content
+                        full_response += content
+                        yield f"data: {content}\n\n"
                 
                 # Save agent response to database
                 agent_message_data = MessageCreate(
                     content=full_response,
-                    role=MessageRole.AGENT,
+                    role=MessageRole.agent,
                     conversation_id=conversation_id,
                     user_id=current_user_id
                 )
