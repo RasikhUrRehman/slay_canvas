@@ -439,7 +439,7 @@ class Extractor:
         try:
             print("using instagram")
             # Use the Instagram processor to get media URLs
-            media_urls = get_instagram_media_urls(url)
+            media_urls, post = get_instagram_media_urls(url)
             print(media_urls)
             print("+"*20)
             if not media_urls:
