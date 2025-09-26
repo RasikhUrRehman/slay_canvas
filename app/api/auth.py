@@ -255,8 +255,14 @@ if DATABASE_AVAILABLE:
                 token_type="bearer"
             )
             
+        except HTTPException:
+            # Re-raise HTTP exceptions (like user already exists)
+            raise
         except Exception as e:
             logger.error(f"Registration error: {str(e)}")
+            # Check if the error is related to user already existing
+            if "already exists" in str(e).lower() or "unique constraint" in str(e).lower() or "duplicate" in str(e).lower():
+                raise HTTPException(status_code=400, detail="User with this email already exists")
             raise HTTPException(status_code=500, detail="Registration failed")
 
 
