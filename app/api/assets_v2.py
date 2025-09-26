@@ -103,7 +103,7 @@ async def rename_collection(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.delete("/collections/{collection_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/collections/{collection_id}")
 async def delete_collection(
     workspace_id: int,
     collection_id: int,
@@ -266,7 +266,7 @@ async def get_asset(
     return asset
 
 
-@router.delete("/assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/assets/{asset_id}")
 async def delete_asset(
     workspace_id: int,
     asset_id: int,
