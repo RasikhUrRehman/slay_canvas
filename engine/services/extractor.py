@@ -441,7 +441,10 @@ class Extractor:
             # Use the Instagram processor to get media URLs
             media_urls = get_instagram_media_urls(url)
             print("+"*20)
-            print(media_urls.get("images"))
+            if media_urls:
+                print(media_urls.get("images"))
+            else:
+                print("media_urls is None")
             print("+"*20)
             if not media_urls:
                 raise ValueError("Failed to extract Instagram media URLs")
@@ -470,30 +473,32 @@ class Extractor:
             
 
             image_transcriptions = []
-            for image_url in media_urls.get("images", []):
-                try:
-                    image_text = self.image_processor.process(image_url)
-                    print("Image text")
-                    print(image_text)
-                    if image_text:
-                        image_transcriptions.append({
-                            "url": image_url,
-                            "text": image_text
-                        })
-                except Exception as e:
-                    logger.warning(f"Failed to process Instagram image {image_url}: {e}")
+            if media_urls and media_urls.get("images"):
+                for image_url in media_urls.get("images", []):
+                    try:
+                        image_text = self.image_processor.process(image_url)
+                        print("Image text")
+                        print(image_text)
+                        if image_text:
+                            image_transcriptions.append({
+                                "url": image_url,
+                                "text": image_text
+                            })
+                    except Exception as e:
+                        logger.warning(f"Failed to process Instagram image {image_url}: {e}")
             
             # For videos, we would need to extract audio and transcribe
             audio_transcriptions = []
-            for video_url in media_urls.get("videos", []):
-                try:
-                    # Note: Audio extraction from Instagram videos would require additional processing
-                    # This is a placeholder for future implementation
-                    audio_text = self.audio_processor.transcribe_from_url(video_url)
-                    if audio_text:
-                        audio_transcriptions.append(audio_text)
-                except Exception as e:
-                    logger.warning(f"Failed to process Instagram video audio {video_url}: {e}")
+            if media_urls and media_urls.get("videos"):
+                for video_url in media_urls.get("videos", []):
+                    try:
+                        # Note: Audio extraction from Instagram videos would require additional processing
+                        # This is a placeholder for future implementation
+                        audio_text = self.audio_processor.transcribe_from_url(video_url)
+                        if audio_text:
+                            audio_transcriptions.append(audio_text)
+                    except Exception as e:
+                        logger.warning(f"Failed to process Instagram video audio {video_url}: {e}")
             
             # Combine all transcriptions
             all_text = []
@@ -508,8 +513,8 @@ class Extractor:
                 url=url,
                 title= "insta post", # f"Instagram post by @{post.owner_username}",
                 content= "", # post.caption or "",
-                images=media_urls.get("images", []),
-                videos=media_urls.get("videos", []),
+                images=media_urls.get("images", []) if media_urls else [],
+                videos=media_urls.get("videos", []) if media_urls else [],
                 metadata={
                     "username": "",#post.owner_username,
                     "likes": "",#post.likes,
