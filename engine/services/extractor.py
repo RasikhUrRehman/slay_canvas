@@ -442,7 +442,7 @@ class Extractor:
             media_urls = get_instagram_media_urls(url)
             print("+"*20)
             if media_urls:
-                print(media_urls.get("images"))
+                print(media_urls.get("images", []))
             else:
                 print("media_urls is None")
             print("+"*20)
