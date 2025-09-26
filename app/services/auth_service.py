@@ -1,32 +1,68 @@
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
+
 import httpx
+from authlib.integrations.httpx_client import AsyncOAuth2Client
+from fastapi import HTTPException, status
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from fastapi import HTTPException, status
-from authlib.integrations.httpx_client import AsyncOAuth2Client
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.user import User
-from app.schemas.user import UserCreate, GoogleUserInfo, OAuthUserCreate
+from app.schemas.user import GoogleUserInfo, OAuthUserCreate, UserCreate
 from app.services.user_service import UserService
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Configure bcrypt with explicit settings to handle compatibility issues
+pwd_context = CryptContext(
+    schemes=["bcrypt"], 
+    deprecated="auto",
+    bcrypt__rounds=12,
+    bcrypt__ident="2b"
+)
 
 
 class AuthService:
     def __init__(self):
         self.user_service = UserService()
+    
+    def _validate_password_length(self, password: str) -> str:
+        """Validate and truncate password if needed for bcrypt compatibility."""
+        if not password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password cannot be empty"
+            )
+        
+        # bcrypt has a 72-byte limit, truncate if necessary
+        password_bytes = password.encode('utf-8')
+        if len(password_bytes) > 72:
+            # Truncate to 72 bytes
+            password = password_bytes[:72].decode('utf-8', errors='ignore')
+        
+        return password
         
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
         """Verify a password against its hash."""
-        return pwd_context.verify(plain_password, hashed_password)
+        try:
+            plain_password = self._validate_password_length(plain_password)
+            return pwd_context.verify(plain_password, hashed_password)
+        except Exception as e:
+            print(f"Password verification error: {e}")
+            return False
     
     def get_password_hash(self, password: str) -> str:
         """Generate password hash."""
-        return pwd_context.hash(password)
+        try:
+            password = self._validate_password_length(password)
+            return pwd_context.hash(password)
+        except Exception as e:
+            print(f"Password hashing error: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error processing password"
+            )
     
     def create_access_token(self, data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
         """Create JWT access token."""
@@ -50,42 +86,56 @@ class AuthService:
     
     async def authenticate_user(self, db: AsyncSession, email: str, password: str) -> Optional[User]:
         """Authenticate user with email and password."""
-        user = await self.user_service.get_user_by_email(db, email)
-        if not user or not user.hashed_password:
+        try:
+            user = await self.user_service.get_user_by_email(db, email)
+            if not user or not user.hashed_password:
+                return None
+            if not self.verify_password(password, user.hashed_password):
+                return None
+            return user
+        except Exception as e:
+            print(f"Authentication error: {e}")
             return None
-        if not self.verify_password(password, user.hashed_password):
-            return None
-        return user
     
     async def register_user(self, db: AsyncSession, user_data: UserCreate) -> User:
         """Register a new user."""
-        # Check if user already exists
-        existing_user = await self.user_service.get_user_by_email(db, user_data.email)
-        if existing_user:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered"
+        try:
+            # Check if user already exists
+            existing_user = await self.user_service.get_user_by_email(db, user_data.email)
+            if existing_user:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email already registered"
+                )
+            
+            # Hash password if provided
+            hashed_password = None
+            if user_data.password:
+                hashed_password = self.get_password_hash(user_data.password)
+            
+            # Create user
+            user = User(
+                email=user_data.email,
+                full_name=user_data.full_name,
+                hashed_password=hashed_password,
+                is_active=True,
+                is_verified=False,
+                provider="email" if user_data.password else None
             )
-        
-        # Hash password if provided
-        hashed_password = None
-        if user_data.password:
-            hashed_password = self.get_password_hash(user_data.password)
-        
-        # Create user
-        user = User(
-            email=user_data.email,
-            full_name=user_data.full_name,
-            hashed_password=hashed_password,
-            is_active=True,
-            is_verified=False,
-            provider="email" if user_data.password else None
-        )
-        
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
-        return user
+            
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+            return user
+        except HTTPException:
+            # Re-raise HTTP exceptions as-is
+            raise
+        except Exception as e:
+            print(f"Registration error: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Registration failed. Please try again."
+            )
 
 
 class GoogleOAuthService:

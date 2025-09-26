@@ -10,22 +10,59 @@ from passlib.context import CryptContext
 
 logger = logging.getLogger(__name__)
 
-# Password hashing context using bcrypt
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Password hashing context using bcrypt with explicit configuration
+pwd_context = CryptContext(
+    schemes=["bcrypt"], 
+    deprecated="auto",
+    bcrypt__rounds=12,
+    bcrypt__ident="2b"
+)
 
 
 class PasswordHasher:
     """Utility class for password hashing and verification using bcrypt"""
     
     @staticmethod
+    def _validate_password_length(password: str) -> str:
+        """Validate and truncate password if needed for bcrypt compatibility."""
+        if not password:
+            return password
+        
+        # Encode to bytes to check actual length
+        password_bytes = password.encode('utf-8')
+        
+        # bcrypt has a 72-byte limit, truncate if necessary
+        if len(password_bytes) > 72:
+            # Truncate to 72 bytes, ensuring we don't break UTF-8 characters
+            truncated = password_bytes[:72]
+            # Find the last complete UTF-8 character
+            while truncated and truncated[-1] >= 128:  # Part of multi-byte character
+                truncated = truncated[:-1]
+            password = truncated.decode('utf-8', errors='ignore')
+        
+        return password
+    
+    @staticmethod
     def hash_password(password: str) -> str:
         """Hash a password using bcrypt"""
-        return pwd_context.hash(password)
+        try:
+            validated_password = PasswordHasher._validate_password_length(password)
+            return pwd_context.hash(validated_password)
+        except Exception as e:
+            print(f"Password hashing error: {e}")
+            # Fallback: try with truncated password
+            fallback_password = password[:50] if len(password) > 50 else password
+            return pwd_context.hash(fallback_password)
     
     @staticmethod
     def verify_password(password: str, hashed_password: str) -> bool:
         """Verify a password against its hash using bcrypt"""
-        return pwd_context.verify(password, hashed_password)
+        try:
+            validated_password = PasswordHasher._validate_password_length(password)
+            return pwd_context.verify(validated_password, hashed_password)
+        except Exception as e:
+            print(f"Password verification error: {e}")
+            return False
     
     @staticmethod
     def validate_password_strength(password: str) -> tuple[bool, list[str]]:
