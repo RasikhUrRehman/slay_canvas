@@ -37,7 +37,12 @@ def get_instagram_media_urls(post_url, max_retries=3, retry_delay=2):
         request_timeout=30,  # Increased timeout for deployment
         max_connection_attempts=3
     )
-    
+    try:
+        loader.load_session_from_file("spodermaanle")
+    except FileNotFoundError:
+        loader.login("spodermaanle", "*Slaycanvas#")
+        loader.save_session_to_file()
+        
     # Add a small delay between requests to be respectful to Instagram's servers
     time.sleep(1)
     
