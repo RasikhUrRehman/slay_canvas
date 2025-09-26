@@ -443,7 +443,7 @@ class Extractor:
             print(media_urls)
             print("+"*20)
             if not media_urls:
-                raise ValueError(f"Failed to extract Instagram media URLs {media_urls}")
+                raise ValueError(f"Failed to extractadsfasdfasdfasdf Instagram media URLs {media_urls}")
             
             # Extract shortcode for additional metadata
             shortcode_match = re.search(r'/(p|reel|tv)/([A-Za-z0-9_-]+)', url)
