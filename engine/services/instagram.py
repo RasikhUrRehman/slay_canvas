@@ -24,13 +24,13 @@ USER_AGENTS = [
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0'
 ]
 
-def get_instagram_media_urls(post_url, max_retries=5, retry_delay=3):
+def get_instagram_media_urls(post_url, max_retries=2, retry_delay=1):
     """
-    Extract media URLs from Instagram posts with enhanced error handling and fallback strategies.
+    Extract media URLs from Instagram posts with fast processing and minimal delays.
     
     Args:
         post_url (str): Instagram post URL
-        max_retries (int): Maximum number of retry attempts
+        max_retries (int): Maximum number of retry attempts (kept low for speed)
         retry_delay (int): Base delay between retries in seconds
     
     Returns:
@@ -44,18 +44,13 @@ def get_instagram_media_urls(post_url, max_retries=5, retry_delay=3):
         logger.error(f"Invalid Instagram URL format: {post_url}")
         return None
     
-    # Try primary method with enhanced configuration
+    # Try primary method with minimal retries and delays
     result = _try_instaloader_primary(shortcode, max_retries, retry_delay)
     if result:
         return result
     
-    # Try fallback method with different configuration
-    logger.info("Primary method failed, trying fallback approach...")
-    result = _try_instaloader_fallback(shortcode, max_retries // 2, retry_delay)
-    if result:
-        return result
-    
-    logger.error(f"All methods failed to fetch Instagram media for URL: {post_url}")
+    # Skip fallback for now to avoid blocking - can be enabled later if needed
+    logger.warning("Primary method failed, skipping fallback to avoid blocking main thread")
     return None
 
 
@@ -76,7 +71,7 @@ def _extract_shortcode(post_url):
 
 
 def _try_instaloader_primary(shortcode, max_retries, retry_delay):
-    """Primary instaloader attempt with enhanced configuration"""
+    """Primary instaloader attempt with minimal delays for speed"""
     for attempt in range(max_retries):
         try:
             logger.info(f"Primary method attempt {attempt + 1}/{max_retries}")
@@ -84,7 +79,7 @@ def _try_instaloader_primary(shortcode, max_retries, retry_delay):
             # Rotate user agents to avoid detection
             user_agent = random.choice(USER_AGENTS)
             
-            # Enhanced configuration for bypassing detection
+            # Fast configuration - minimal delays
             loader = instaloader.Instaloader(
                 download_pictures=False,
                 download_videos=False,
@@ -93,14 +88,14 @@ def _try_instaloader_primary(shortcode, max_retries, retry_delay):
                 save_metadata=False,
                 compress_json=False,
                 user_agent=user_agent,
-                request_timeout=45,  # Longer timeout
-                max_connection_attempts=2,
-                sleep=True,  # Enable sleep between requests
-                quiet=True   # Reduce verbosity
+                request_timeout=15,  # Shorter timeout for speed
+                max_connection_attempts=1,  # Fewer attempts
+                sleep=False,  # Disable sleep for speed
+                quiet=True
             )
             
-            # Add minimal delay for testing (instead of random 2-5 seconds)
-            initial_delay = random.uniform(0.5, 1.0)
+            # Minimal delay - no more blocking!
+            initial_delay = random.uniform(0.1, 0.5)  # Very short delay
             logger.info(f"Waiting {initial_delay:.1f}s before request...")
             time.sleep(initial_delay)
             
@@ -114,23 +109,24 @@ def _try_instaloader_primary(shortcode, max_retries, retry_delay):
             error_msg = str(e).lower()
             logger.error(f"Instaloader error on attempt {attempt + 1}: {str(e)}")
             
+            # Much shorter delays for all error types
             if "403" in str(e) or "forbidden" in error_msg:
                 logger.warning("403 Forbidden - Instagram blocking requests")
-                delay = retry_delay + random.uniform(2, 5)  # Shorter delay for testing
+                delay = retry_delay + random.uniform(0.5, 1.0)  # Very short delay
             elif "401" in str(e) or "unauthorized" in error_msg:
                 logger.warning("401 Unauthorized - Authentication issue")
-                delay = retry_delay + random.uniform(1, 3)  # Shorter delay for testing
+                delay = retry_delay + random.uniform(0.2, 0.8)  # Very short delay
             elif "429" in str(e) or "rate limit" in error_msg:
                 logger.warning("Rate limit detected")
-                delay = retry_delay * 2 + random.uniform(3, 8)  # Shorter delay for testing
+                delay = retry_delay + random.uniform(1, 2)  # Short delay
             elif "404" in str(e) or "not found" in error_msg:
                 logger.error("Post not found or private")
                 return None  # Don't retry for 404s
             elif "timeout" in error_msg or "connection" in error_msg:
                 logger.warning("Connection/timeout issue")
-                delay = retry_delay * attempt + random.uniform(5, 15)
+                delay = retry_delay + random.uniform(0.5, 1.5)  # Short delay
             else:
-                delay = retry_delay * (attempt + 1) + random.uniform(3, 8)
+                delay = retry_delay + random.uniform(0.3, 1.0)  # Short delay
             
             if attempt < max_retries - 1:
                 logger.info(f"Retrying in {delay:.1f} seconds...")
@@ -139,7 +135,7 @@ def _try_instaloader_primary(shortcode, max_retries, retry_delay):
         except Exception as e:
             logger.error(f"Unexpected error on attempt {attempt + 1}: {str(e)}")
             if attempt < max_retries - 1:
-                delay = retry_delay * (attempt + 1) + random.uniform(2, 5)
+                delay = retry_delay + random.uniform(0.5, 1.5)  # Short delay
                 logger.info(f"Retrying in {delay:.1f} seconds...")
                 time.sleep(delay)
     
