@@ -195,6 +195,8 @@ async def get_workspace_detailed(
                 "knowledge_base_id": asset.knowledge_base_id,
                 "is_active": asset.is_active,
                 "created_at": asset.created_at,
+                "kb_connection_asset_handle": asset.kb_connection_asset_handle,
+                "kb_connection_kb_handle": asset.kb_connection_kb_handle,
             } for asset in workspace.assets
         ],
         "collections": [
@@ -206,6 +208,8 @@ async def get_workspace_detailed(
                 "is_active": collection.is_active,
                 "created_at": collection.created_at,
                 "asset_count": len([a for a in workspace.assets if a.collection_id == collection.id]),
+                "kb_connection_asset_handle": collection.kb_connection_asset_handle,
+                "kb_connection_kb_handle": collection.kb_connection_kb_handle,
             } for collection in workspace.collections
         ],
     }
