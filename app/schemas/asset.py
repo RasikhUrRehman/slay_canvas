@@ -12,6 +12,8 @@ class AssetBase(BaseModel):
     content: Optional[str] = None                    # for text assets
     asset_metadata: Optional[Dict[str, Any]] = {}    # flexible extra info
     is_active: Optional[bool] = True
+    position_x: Optional[int] = 0                    # React Flow X position
+    position_y: Optional[int] = 0                    # React Flow Y position
 
 
 # Input schema for creating an asset
@@ -37,6 +39,8 @@ class AssetUpdate(BaseModel):
     asset_metadata: Optional[Dict[str, Any]] = None
     collection_id: Optional[int] = None
     is_active: Optional[bool] = None
+    position_x: Optional[int] = None                 # React Flow X position
+    position_y: Optional[int] = None                 # React Flow Y position
 
 
 # Response schema

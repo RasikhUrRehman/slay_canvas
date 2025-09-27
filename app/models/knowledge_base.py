@@ -36,6 +36,10 @@ class KnowledgeBase(Base):
     settings = Column(JSON, default={})
     is_active = Column(Boolean, default=True)
     
+    # React Flow positioning
+    position_x = Column(Integer, default=0, nullable=False)  # X coordinate for React Flow
+    position_y = Column(Integer, default=0, nullable=False)  # Y coordinate for React Flow
+    
     # Owner relationship
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     

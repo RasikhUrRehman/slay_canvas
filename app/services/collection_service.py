@@ -97,6 +97,10 @@ class CollectionService:
             collection.collection_metadata = collection_data.collection_metadata
         if collection_data.is_active is not None:
             collection.is_active = collection_data.is_active
+        if collection_data.position_x is not None:
+            collection.position_x = collection_data.position_x
+        if collection_data.position_y is not None:
+            collection.position_y = collection_data.position_y
         
         await db.commit()
         await db.refresh(collection)

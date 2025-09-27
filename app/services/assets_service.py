@@ -249,3 +249,32 @@ class AssetService:
             "asset_id": asset.id,
             "previous_collection_id": old_collection_id
         }
+
+    async def update_asset_position(
+        self,
+        db: AsyncSession,
+        workspace_id: int,
+        asset_id: int,
+        position_update,
+    ) -> Optional[AssetModel]:
+        """Update asset position for React Flow."""
+        # Get the asset
+        query = select(AssetModel).where(
+            AssetModel.id == asset_id,
+            AssetModel.workspace_id == workspace_id
+        )
+        result = await db.execute(query)
+        asset = result.scalar_one_or_none()
+        
+        if not asset:
+            return None
+        
+        # Update position
+        if position_update.position_x is not None:
+            asset.position_x = position_update.position_x
+        if position_update.position_y is not None:
+            asset.position_y = position_update.position_y
+        
+        await db.commit()
+        await db.refresh(asset)
+        return asset

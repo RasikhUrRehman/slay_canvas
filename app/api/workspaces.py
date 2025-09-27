@@ -172,6 +172,8 @@ async def get_workspace_detailed(
                 "collection_name": kb.collection_name,
                 "is_active": kb.is_active,
                 "created_at": kb.created_at,
+                "position_x": getattr(kb, 'position_x', 0),
+                "position_y": getattr(kb, 'position_y', 0),
                 "conversations": [
                     {
                         "id": conv.id,
@@ -195,6 +197,8 @@ async def get_workspace_detailed(
                 "knowledge_base_id": asset.knowledge_base_id,
                 "is_active": asset.is_active,
                 "created_at": asset.created_at,
+                "position_x": getattr(asset, 'position_x', 0),
+                "position_y": getattr(asset, 'position_y', 0),
             } for asset in workspace.assets
         ],
         "collections": [
@@ -205,6 +209,8 @@ async def get_workspace_detailed(
                 "knowledge_base_id": collection.knowledge_base_id,
                 "is_active": collection.is_active,
                 "created_at": collection.created_at,
+                "position_x": getattr(collection, 'position_x', 0),
+                "position_y": getattr(collection, 'position_y', 0),
                 "asset_count": len([a for a in workspace.assets if a.collection_id == collection.id]),
             } for collection in workspace.collections
         ],

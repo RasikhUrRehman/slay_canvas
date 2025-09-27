@@ -1,10 +1,11 @@
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.schemas.asset import AssetCreate, AssetCreateWithFile, AssetRead
+from app.schemas.asset import AssetCreate, AssetCreateWithFile, AssetRead, AssetUpdate
 from app.schemas.collection import (
     CollectionCreate,
     CollectionRead,
@@ -16,6 +17,18 @@ from app.services.assets_service import AssetService
 from app.services.collection_service import CollectionService
 from app.utils.auth import get_current_user_id
 from app.utils.storage import delete_file_from_cloudinary, upload_file_to_cloudinary
+
+
+# Request models for position updates
+class PositionUpdate(BaseModel):
+    id: int
+    type: str  # "asset", "collection", "kb"
+    x: int
+    y: int
+
+class BulkPositionUpdate(BaseModel):
+    positions: List[PositionUpdate]
+
 
 router = APIRouter(prefix="/workspaces/{workspace_id}", tags=["assets"])
 asset_service = AssetService()
@@ -480,3 +493,121 @@ async def unlink_collection_from_knowledge_base(
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to unlink collection: {str(e)}")
+
+
+# -------------------------
+# Position Management Endpoints
+# -------------------------
+
+@router.patch("/positions")
+async def update_position(
+    workspace_id: int,
+    position: PositionUpdate,
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update position for any item (asset, collection, or knowledge base) based on type."""
+    try:
+        if position.type == "asset":
+            asset_update = AssetUpdate(position_x=position.x, position_y=position.y)
+            result = await asset_service.update_asset_position(db, workspace_id, position.id, asset_update)
+            if not result:
+                raise HTTPException(status_code=404, detail="Asset not found")
+            return {
+                "message": "Asset position updated successfully",
+                "id": position.id,
+                "type": "asset",
+                "position": {"x": position.x, "y": position.y}
+            }
+            
+        elif position.type == "collection":
+            collection_update = CollectionUpdate(position_x=position.x, position_y=position.y)
+            result = await collection_service.update_collection(db, workspace_id, position.id, collection_update)
+            if not result:
+                raise HTTPException(status_code=404, detail="Collection not found")
+            return {
+                "message": "Collection position updated successfully",
+                "id": position.id,
+                "type": "collection",
+                "position": {"x": position.x, "y": position.y}
+            }
+            
+        elif position.type == "kb":
+            # Import knowledge base service and update schema
+            from app.schemas.knowledge_base import KnowledgeBaseUpdate
+            from app.services.knowledge_base_service import knowledge_base_service
+            
+            kb_update = KnowledgeBaseUpdate(position_x=position.x, position_y=position.y)
+            result = await knowledge_base_service.update_knowledge_base(db, position.id, kb_update, current_user_id)
+            if not result:
+                raise HTTPException(status_code=404, detail="Knowledge base not found")
+            return {
+                "message": "Knowledge base position updated successfully",
+                "id": position.id,
+                "type": "kb",
+                "position": {"x": position.x, "y": position.y}
+            }
+            
+        else:
+            raise HTTPException(status_code=400, detail="Invalid type. Must be 'asset', 'collection', or 'kb'")
+            
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update position: {str(e)}")
+
+
+@router.patch("/bulk-positions")
+async def update_bulk_positions(
+    workspace_id: int,
+    bulk_update: BulkPositionUpdate,
+    current_user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update positions for multiple items in bulk."""
+    try:
+        results = []
+        
+        for position in bulk_update.positions:
+            try:
+                if position.type == "asset":
+                    asset_update = AssetUpdate(position_x=position.x, position_y=position.y)
+                    result = await asset_service.update_asset_position(db, workspace_id, position.id, asset_update)
+                    if result:
+                        results.append({"id": position.id, "type": "asset", "status": "success"})
+                    else:
+                        results.append({"id": position.id, "type": "asset", "status": "not_found"})
+                        
+                elif position.type == "collection":
+                    collection_update = CollectionUpdate(position_x=position.x, position_y=position.y)
+                    result = await collection_service.update_collection(db, workspace_id, position.id, collection_update)
+                    if result:
+                        results.append({"id": position.id, "type": "collection", "status": "success"})
+                    else:
+                        results.append({"id": position.id, "type": "collection", "status": "not_found"})
+                        
+                elif position.type == "kb":
+                    from app.schemas.knowledge_base import KnowledgeBaseUpdate
+                    from app.services.knowledge_base_service import (
+                        knowledge_base_service,
+                    )
+                    
+                    kb_update = KnowledgeBaseUpdate(position_x=position.x, position_y=position.y)
+                    result = await knowledge_base_service.update_knowledge_base(db, position.id, kb_update, current_user_id)
+                    if result:
+                        results.append({"id": position.id, "type": "kb", "status": "success"})
+                    else:
+                        results.append({"id": position.id, "type": "kb", "status": "not_found"})
+                        
+                else:
+                    results.append({"id": position.id, "type": position.type, "status": "invalid_type"})
+                    
+            except Exception as e:
+                results.append({"id": position.id, "type": position.type, "status": "error", "error": str(e)})
+        
+        return {"message": "Bulk position update completed", "results": results}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update bulk positions: {str(e)}")

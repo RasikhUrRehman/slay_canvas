@@ -17,6 +17,8 @@ class KnowledgeBaseBase(BaseModel):
     settings: Dict[str, Any] = {}
     is_active: bool = True
     workspace_id: Optional[int] = None
+    position_x: Optional[int] = 0                    # React Flow X position
+    position_y: Optional[int] = 0                    # React Flow Y position
 
 
 class KnowledgeBaseCreate(KnowledgeBaseBase):
@@ -34,6 +36,8 @@ class KnowledgeBaseUpdate(BaseModel):
     settings: Optional[Dict[str, Any]] = None
     is_active: Optional[bool] = None
     workspace_id: Optional[int] = None
+    position_x: Optional[int] = None                 # React Flow X position
+    position_y: Optional[int] = None                 # React Flow Y position
 
 
 class KnowledgeBasePublic(KnowledgeBaseBase):

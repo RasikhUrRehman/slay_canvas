@@ -24,6 +24,10 @@ class Collection(Base):
     description = Column(Text, nullable=True)
     collection_metadata = Column(JSON, default={})  # tags, color, etc.
     is_active = Column(Boolean, default=True, nullable=False)
+    
+    # React Flow positioning
+    position_x = Column(Integer, default=0, nullable=False)  # X coordinate for React Flow
+    position_y = Column(Integer, default=0, nullable=False)  # Y coordinate for React Flow
 
     # Foreign keys
     workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
