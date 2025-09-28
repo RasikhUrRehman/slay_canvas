@@ -199,6 +199,8 @@ async def get_workspace_detailed(
                 "created_at": asset.created_at,
                 "position_x": getattr(asset, 'position_x', 0),
                 "position_y": getattr(asset, 'position_y', 0),
+                "kb_connection_asset_handle": asset.kb_connection_asset_handle,
+                "kb_connection_kb_handle": asset.kb_connection_kb_handle,
             } for asset in workspace.assets
         ],
         "collections": [
@@ -212,6 +214,8 @@ async def get_workspace_detailed(
                 "position_x": getattr(collection, 'position_x', 0),
                 "position_y": getattr(collection, 'position_y', 0),
                 "asset_count": len([a for a in workspace.assets if a.collection_id == collection.id]),
+                "kb_connection_asset_handle": collection.kb_connection_asset_handle,
+                "kb_connection_kb_handle": collection.kb_connection_kb_handle,
             } for collection in workspace.collections
         ],
     }

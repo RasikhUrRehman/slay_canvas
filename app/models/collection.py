@@ -40,6 +40,9 @@ class Collection(Base):
     assets = relationship("Asset", back_populates="collection", cascade="all, delete-orphan")
     knowledge_base = relationship("KnowledgeBase", back_populates="collections")
 
+    kb_connection_asset_handle = Column(String, nullable=True)  # Which handle of the asset was used ("left" or "right")
+    kb_connection_kb_handle = Column(String, nullable=True)     # Which handle of the KB was used ("left" or "right")
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

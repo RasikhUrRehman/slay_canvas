@@ -422,18 +422,21 @@ async def link_asset_to_knowledge_base(
     workspace_id: int,
     asset_id: int,
     knowledge_base_id: int,
+    asset_handle: Optional[str] = None,  # Which handle of the asset ("left" or "right")
+    kb_handle: Optional[str] = None,     # Which handle of the KB ("left" or "right")
     current_user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Link an asset to a knowledge base and create chunks in Milvus."""
     try:
         result = await asset_knowledge_service.link_asset_to_knowledge_base(
-            db, asset_id, knowledge_base_id, current_user_id
+            db, asset_id, knowledge_base_id, current_user_id, asset_handle, kb_handle
         )
         return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        print(e)
         raise HTTPException(status_code=500, detail=f"Failed to link asset: {str(e)}")
 
 
@@ -442,13 +445,15 @@ async def link_collection_to_knowledge_base(
     workspace_id: int,
     collection_id: int,
     knowledge_base_id: int,
+    collection_handle: Optional[str] = None,  # Which handle of the collection ("left" or "right")
+    kb_handle: Optional[str] = None,          # Which handle of the KB ("left" or "right")
     current_user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Link a collection to a knowledge base and create chunks for all assets."""
     try:
         result = await asset_knowledge_service.link_collection_to_knowledge_base(
-            db, collection_id, knowledge_base_id, current_user_id
+            db, collection_id, knowledge_base_id, current_user_id, collection_handle, kb_handle
         )
         return result
     except ValueError as e:

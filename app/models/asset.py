@@ -37,6 +37,10 @@ class Asset(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     collection_id = Column(Integer, ForeignKey("collections.id", ondelete="CASCADE"), nullable=True, index=True)  # Optional: asset can be in collection
     knowledge_base_id = Column(Integer, ForeignKey("knowledge_bases.id", ondelete="SET NULL"), nullable=True, index=True)  # Optional: asset can be linked to KB
+    
+    # React Flow handle tracking for KB connections
+    kb_connection_asset_handle = Column(String, nullable=True)  # Which handle of the asset was used ("left" or "right")
+    kb_connection_kb_handle = Column(String, nullable=True)     # Which handle of the KB was used ("left" or "right")
 
     # Relationships
     workspace = relationship("Workspace", back_populates="assets")

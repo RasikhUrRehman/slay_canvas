@@ -1681,12 +1681,14 @@ Please provide a comprehensive answer based only on the information provided in 
                     stream=True
                 )
                 
-                # Stream response chunks
+                # Stream response tokens individually with small delay for proper streaming
                 for chunk in stream:
                     if chunk.choices[0].delta.content is not None:
-                        content = chunk.choices[0].delta.content
-                        full_response += content
-                        yield f"data: {content}\n\n"
+                        token = chunk.choices[0].delta.content
+                        full_response += token
+                        # Send each token as plain text with small delay
+                        yield token
+                        await asyncio.sleep(0.01)  # Small delay to ensure streaming works
                 
                 # Save agent response to database
                 agent_message_data = MessageCreate(
@@ -1700,21 +1702,21 @@ Please provide a comprehensive answer based only on the information provided in 
                     message_data=agent_message_data
                 )
                 
-                # Send conversation_id in the final message for client reference
-                yield f"data: [CONVERSATION_ID:{conversation_id}]\n\n"
-                yield f"data: [DONE]\n\n"
+                # Send conversation_id and done markers
+                yield f"[CONVERSATION_ID:{conversation_id}]"
+                yield "[DONE]"
                 
             except Exception as e:
                 logger.error(f"Error in streaming response: {str(e)}")
-                yield f"data: [ERROR: {str(e)}]\n\n"
+                yield f"[ERROR: {str(e)}]"
         
         return StreamingResponse(
             generate_response(),
-            media_type="text/event-stream",
+            media_type="text/plain",
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-                "Content-Type": "text/event-stream"
+                "Content-Type": "text/plain; charset=utf-8"
             }
         )
         

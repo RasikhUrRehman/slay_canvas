@@ -4,7 +4,7 @@ and creating chunks in Milvus
 """
 import logging
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -28,7 +28,9 @@ class AssetKnowledgeService:
         db: AsyncSession,
         asset_id: int,
         knowledge_base_id: int,
-        user_id: int
+        user_id: int,
+        asset_handle: Optional[str] = None,
+        kb_handle: Optional[str] = None
     ) -> Dict[str, any]:
         """Link an asset to a knowledge base and create chunks in Milvus"""
         
@@ -49,6 +51,12 @@ class AssetKnowledgeService:
         # Link asset to knowledge base
         asset.knowledge_base_id = knowledge_base_id
         
+        # Save handle information if provided
+        if asset_handle is not None:
+            asset.kb_connection_asset_handle = asset_handle
+        if kb_handle is not None:
+            asset.kb_connection_kb_handle = kb_handle
+        
         # Process asset for chunking
         chunk_result = await self._process_asset_for_chunking(asset, kb, db)
         
@@ -68,7 +76,9 @@ class AssetKnowledgeService:
         db: AsyncSession,
         collection_id: int,
         knowledge_base_id: int,
-        user_id: int
+        user_id: int,
+        collection_handle: Optional[str] = None,
+        kb_handle: Optional[str] = None
     ) -> Dict[str, any]:
         """Link a collection to a knowledge base and create chunks for all assets"""
         
@@ -91,6 +101,12 @@ class AssetKnowledgeService:
         
         # Link collection to knowledge base
         collection.knowledge_base_id = knowledge_base_id
+        
+        # Save handle information if provided
+        if collection_handle is not None:
+            collection.kb_connection_asset_handle = collection_handle
+        if kb_handle is not None:
+            collection.kb_connection_kb_handle = kb_handle
         
         # Process all assets in the collection
         total_chunks = 0
@@ -527,7 +543,9 @@ class AssetKnowledgeService:
         try:
             import os
             import tempfile
+
             import requests
+
             from engine.services.extractor import Extractor
             
             logger.info(f"Processing file: {asset.file_path}")
