@@ -1,220 +1,240 @@
-import json
-import logging
+
+# def get_instagram_media_urls(post_url: str) -> dict:
+#     """
+#     Extracts Instagram post information including video URL, audio URL, thumbnail, and metadata.
+    
+#     Returns a dictionary with keys:
+#     - video_url
+#     - audio_url
+#     - thumbnail_url
+#     - title
+#     - uploader
+#     - description
+#     - duration
+#     - webpage_url
+#     - full_formats (list of all available formats)
+#     """
+#     ydl_opts = {
+#         "format": "best",       # best available format
+#         "quiet": True,          # suppress logs
+#         "skip_download": True,  # don’t actually download
+#     }
+
+#     with YoutubeDL(ydl_opts) as ydl:
+#         try:
+#             info = ydl.extract_info(post_url, download=False)
+#         except Exception as e:
+#             print(f"Error extracting: {e}")
+#             return None
+
+#     result = {
+#         "video_url": None,
+#         "audio_url": None,
+#         "thumbnail_url": info.get("thumbnail"),
+#         "title": info.get("title"),
+#         "uploader": info.get("uploader"),
+#         "description": info.get("description"),
+#         "duration": info.get("duration"),
+#         "webpage_url": info.get("webpage_url"),
+#         "full_formats": info.get("formats", [])
+#     }
+
+#     # Find best video+audio format
+#     if "formats" in info and info["formats"]:
+#         # Prefer a format that has both video+audio
+#         for f in reversed(info["formats"]):
+#             if f.get("vcodec") != "none" and f.get("acodec") != "none":
+#                 result["video_url"] = f.get("url")
+#                 break
+
+#         # Get audio-only format
+#         for f in info["formats"]:
+#             if f.get("vcodec") == "none" and f.get("acodec") != "none":
+#                 result["audio_url"] = f.get("url")
+#                 break
+
+#     # fallback if direct url available
+#     if not result["video_url"]:
+#         result["video_url"] = info.get("url")
+
+#     return result
+
+
+
+from yt_dlp import YoutubeDL
+from typing import Optional, Dict, Any, List
 import random
-import re
-import time
-from urllib.parse import urlparse
 
-import instaloader
-import requests
 
-from app.core.config import settings
-from engine.processors.image_processor import ImageProcessor
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# User agents for rotation to avoid detection
-USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0'
-]
-
-def get_instagram_media_urls(post_url, max_retries=2, retry_delay=1):
-    """
-    Extract media URLs from Instagram posts with fast processing and minimal delays.
-    
-    Args:
-        post_url (str): Instagram post URL
-        max_retries (int): Maximum number of retry attempts (kept low for speed)
-        retry_delay (int): Base delay between retries in seconds
-    
-    Returns:
-        dict: media_urls dict with images, videos, audio or None on failure
-    """
-    logger.info(f"Attempting to fetch Instagram media from URL: {post_url}")
-    
-    # Extract shortcode first to validate URL
-    shortcode = _extract_shortcode(post_url)
-    if not shortcode:
-        logger.error(f"Invalid Instagram URL format: {post_url}")
+def _pick_best_video_url(formats: List[Dict[str, Any]]) -> Optional[str]:
+    if not formats:
         return None
-    
-    # Try primary method with minimal retries and delays
-    result = _try_instaloader_primary(shortcode, max_retries, retry_delay)
-    if result:
-        return result
-    
-    # Skip fallback for now to avoid blocking - can be enabled later if needed
-    logger.warning("Primary method failed, skipping fallback to avoid blocking main thread")
-    return None
-
-
-def _extract_shortcode(post_url):
-    """Extract shortcode from Instagram URL"""
-    parsed_url = urlparse(post_url)
-    path_parts = parsed_url.path.strip('/').split('/')
-    
-    shortcode = None
-    if 'p' in path_parts:
-        shortcode = path_parts[path_parts.index('p') + 1]
-    elif 'reel' in path_parts:
-        shortcode = path_parts[path_parts.index('reel') + 1]
-    elif 'reels/audio' in path_parts:
-        shortcode = path_parts[path_parts.index('audio') + 1]
-    
-    return shortcode
-
-
-def _try_instaloader_primary(shortcode, max_retries, retry_delay):
-    """Primary instaloader attempt with minimal delays for speed"""
-    for attempt in range(max_retries):
-        try:
-            logger.info(f"Primary method attempt {attempt + 1}/{max_retries}")
-            
-            # Rotate user agents to avoid detection
-            user_agent = random.choice(USER_AGENTS)
-            
-            # Fast configuration - minimal delays
-            loader = instaloader.Instaloader(
-                download_pictures=False,
-                download_videos=False,
-                download_video_thumbnails=False,
-                download_comments=False,
-                save_metadata=False,
-                compress_json=False,
-                user_agent=user_agent,
-                request_timeout=15,  # Shorter timeout for speed
-                max_connection_attempts=1,  # Fewer attempts
-                sleep=False,  # Disable sleep for speed
-                quiet=True
-            )
-            
-            # Minimal delay - no more blocking!
-            initial_delay = random.uniform(0.1, 0.5)  # Very short delay
-            logger.info(f"Waiting {initial_delay:.1f}s before request...")
-            time.sleep(initial_delay)
-            
-            # Fetch post
-            post = instaloader.Post.from_shortcode(loader.context, shortcode)
-            logger.info(f"Successfully fetched post metadata for shortcode: {shortcode}")
-            
-            return _extract_media_from_post(post)
-            
-        except instaloader.exceptions.InstaloaderException as e:
-            error_msg = str(e).lower()
-            logger.error(f"Instaloader error on attempt {attempt + 1}: {str(e)}")
-            
-            # Much shorter delays for all error types
-            if "403" in str(e) or "forbidden" in error_msg:
-                logger.warning("403 Forbidden - Instagram blocking requests")
-                delay = retry_delay + random.uniform(0.5, 1.0)  # Very short delay
-            elif "401" in str(e) or "unauthorized" in error_msg:
-                logger.warning("401 Unauthorized - Authentication issue")
-                delay = retry_delay + random.uniform(0.2, 0.8)  # Very short delay
-            elif "429" in str(e) or "rate limit" in error_msg:
-                logger.warning("Rate limit detected")
-                delay = retry_delay + random.uniform(1, 2)  # Short delay
-            elif "404" in str(e) or "not found" in error_msg:
-                logger.error("Post not found or private")
-                return None  # Don't retry for 404s
-            elif "timeout" in error_msg or "connection" in error_msg:
-                logger.warning("Connection/timeout issue")
-                delay = retry_delay + random.uniform(0.5, 1.5)  # Short delay
-            else:
-                delay = retry_delay + random.uniform(0.3, 1.0)  # Short delay
-            
-            if attempt < max_retries - 1:
-                logger.info(f"Retrying in {delay:.1f} seconds...")
-                time.sleep(delay)
-                
-        except Exception as e:
-            logger.error(f"Unexpected error on attempt {attempt + 1}: {str(e)}")
-            if attempt < max_retries - 1:
-                delay = retry_delay + random.uniform(0.5, 1.5)  # Short delay
-                logger.info(f"Retrying in {delay:.1f} seconds...")
-                time.sleep(delay)
-    
-    return None
-
-
-def _try_instaloader_fallback(shortcode, max_retries, retry_delay):
-    """Fallback instaloader attempt with minimal configuration"""
-    for attempt in range(max_retries):
-        try:
-            logger.info(f"Fallback method attempt {attempt + 1}/{max_retries}")
-            
-            # Minimal configuration to avoid detection
-            loader = instaloader.Instaloader(
-                download_pictures=False,
-                download_videos=False,
-                download_video_thumbnails=False,
-                download_comments=False,
-                save_metadata=False,
-                compress_json=False,
-                request_timeout=60,  # Even longer timeout
-                max_connection_attempts=1,
-                sleep=True,
-                quiet=True
-            )
-            
-            # Longer delay for fallback
-            delay_time = random.uniform(10, 20)
-            logger.info(f"Fallback waiting {delay_time:.1f}s before request...")
-            time.sleep(delay_time)
-            
-            post = instaloader.Post.from_shortcode(loader.context, shortcode)
-            logger.info(f"Fallback successfully fetched post for shortcode: {shortcode}")
-            
-            return _extract_media_from_post(post)
-            
-        except Exception as e:
-            logger.error(f"Fallback error on attempt {attempt + 1}: {str(e)}")
-            if attempt < max_retries - 1:
-                delay = retry_delay * (2 ** attempt) + random.uniform(15, 30)
-                logger.info(f"Fallback retrying in {delay:.1f} seconds...")
-                time.sleep(delay)
-    
-    return None
-
-
-def _extract_media_from_post(post):
-    """Extract media URLs from Instagram post object"""
-    media_urls = {"images": [], "videos": [], "audio": None}
-    
-    try:
-        if post.is_video:
-            if hasattr(post, 'video_url') and post.video_url:
-                media_urls["videos"].append(post.video_url)
-                logger.info(f"Added video URL: {post.video_url}")
-        else:
-            if hasattr(post, 'url') and post.url:
-                media_urls["images"].append(post.url)
-                logger.info(f"Added image URL: {post.url}")
-        
-        # Handle sidecar (multiple media in one post)
-        if hasattr(post, 'typename') and post.typename == "GraphSidecar":
-            logger.info("Processing sidecar post with multiple media")
-            try:
-                for i, node in enumerate(post.get_sidecar_nodes()):
-                    if hasattr(node, 'is_video') and node.is_video:
-                        if hasattr(node, 'video_url') and node.video_url:
-                            media_urls["videos"].append(node.video_url)
-                            logger.info(f"Added sidecar video {i+1}: {node.video_url}")
-                    else:
-                        if hasattr(node, 'display_url') and node.display_url:
-                            media_urls["images"].append(node.display_url)
-                            logger.info(f"Added sidecar image {i+1}: {node.display_url}")
-            except Exception as e:
-                logger.warning(f"Error processing sidecar nodes: {e}")
-        
-        logger.info(f"Successfully extracted media URLs: {len(media_urls['images'])} images, {len(media_urls['videos'])} videos")
-        return media_urls
-        
-    except Exception as e:
-        logger.error(f"Error extracting media from post: {e}")
+    candidates = [f for f in formats if f.get("vcodec") != "none" and f.get("acodec") != "none"]
+    if not candidates:
+        candidates = [f for f in formats if f.get("vcodec") != "none"]
+    if not candidates:
         return None
+    candidates.sort(key=lambda f: (
+        f.get("height") or 0,
+        f.get("tbr") or 0,
+        f.get("filesize") or 0
+    ), reverse=True)
+    return candidates[0].get("url")
+
+
+def _pick_image_url(info: Dict[str, Any]) -> Optional[str]:
+    # Check common top-level keys
+    for k in ("display_url", "url", "thumbnail", "thumbnail_url", "media_url", "image_url"):
+        u = info.get(k)
+        if u and isinstance(u, str) and u.startswith("http"):
+            return u
+
+    # Check carousel_media for /p/ posts with multiple images
+    carousel = info.get("carousel_media") or []
+    if carousel:
+        for item in carousel:
+            for k in ("media_url", "thumbnail_url", "url", "display_url", "image_url"):
+                u = item.get(k)
+                if u and isinstance(u, str) and u.startswith("http"):
+                    return u
+
+    # Check thumbnails list
+    thumbs = info.get("thumbnails") or []
+    if thumbs:
+        thumbs_sorted = sorted(
+            thumbs, key=lambda t: (t.get("height") or 0, t.get("width") or 0), reverse=True
+        )
+        for t in thumbs_sorted:
+            if t.get("url"):
+                return t["url"]
+
+    # Check nested media or entries
+    for key in ("media", "entries"):
+        if key in info:
+            media_list = info[key] if isinstance(info[key], list) else [info[key]]
+            for item in media_list:
+                if isinstance(item, dict):
+                    for k in ("url", "display_url", "thumbnail", "thumbnail_url", "media_url", "image_url"):
+                        u = item.get(k)
+                        if u and isinstance(u, str) and u.startswith("http"):
+                            return u
+
+    # Last resort: check formats for image-like URLs
+    if info.get("formats"):
+        for f in info["formats"]:
+            if f.get("url") and str(f.get("url")).endswith((".jpg", ".jpeg", ".png", ".webp")):
+                return f["url"]
+
+    return None
+
+
+def extract_media_from_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
+    if entry.get("formats"):  # likely video
+        return {
+            "type": "video",
+            "url": _pick_best_video_url(entry["formats"]),
+            "thumbnail": entry.get("thumbnail"),
+        }
+    img = _pick_image_url(entry)
+    if img:
+        return {"type": "image", "url": img, "thumbnail": entry.get("thumbnail") or img}
+    return {"type": "unknown", "url": None, "thumbnail": entry.get("thumbnail")}
+
+
+def get_instagram_media_urls(post_url: str, debug: bool = False) -> Optional[Dict[str, Any]]:
+    # Rotate user agents to avoid rate limits
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15",
+    ]
+    ydl_opts = {
+        "format": "best",
+        "quiet": False,  # Set to False to see detailed yt_dlp errors
+        "skip_download": True,
+        "noplaylist": True,
+        "user_agent": random.choice(user_agents)
+        #"cookiefile": "cookies.txt",  # Path to cookies file (see instructions below)
+    }
+
+    """
+    To generate cookies.txt:
+    1. Log in to Instagram in your browser.
+    2. Install a browser extension like "Get cookies.txt" (Chrome/Firefox).
+    3. Export cookies to a cookies.txt file.
+    4. Place cookies.txt in the same directory as this script or update the path above.
+    """
+
+    with YoutubeDL(ydl_opts) as ydl:
+        try:
+            info = ydl.extract_info(post_url, download=False)
+        except Exception as e:
+            if debug:
+                print("Extraction error:", str(e))
+            return {"error": f"Failed to extract info: {str(e)}"}
+
+    # Collect entries
+    entries = []
+    if info.get("_type") in ("playlist", "multi_video") or info.get("entries"):
+        entries = info.get("entries") or []
+    else:
+        entries = [info]
+
+    image_urls, video_urls, thumbnails = [], [], []
+    for entry in entries:
+        if not entry:
+            continue
+        media = extract_media_from_entry(entry)
+        if media["type"] == "video" and media["url"]:
+            video_urls.append(media["url"])
+        elif media["type"] == "image" and media["url"]:
+            image_urls.append(media["url"])
+        if media.get("thumbnail"):
+            thumbnails.append(media["thumbnail"])
+
+    # Check carousel_media for /p/ posts
+    if not image_urls and info.get("carousel_media"):
+        for item in info["carousel_media"]:
+            img_url = _pick_image_url(item)
+            if img_url and img_url not in image_urls:  # Avoid duplicates
+                image_urls.append(img_url)
+
+    # Fallback: check top-level thumbnails
+    if not image_urls and info.get("thumbnails"):
+        for t in info["thumbnails"]:
+            if t.get("url") and t["url"] not in image_urls:  # Avoid duplicates
+                image_urls.append(t["url"])
+
+    result = {
+        "image_urls": image_urls,
+        "video_urls": video_urls,
+        "thumbnail": thumbnails[0] if thumbnails else info.get("thumbnail"),
+        "text": info.get("description") or info.get("title"),
+        "metadata": {
+            "id": info.get("id"),
+            "title": info.get("title"),
+            "uploader": info.get("uploader"),
+            "duration": info.get("duration"),
+            "webpage_url": info.get("webpage_url") or post_url,
+            "extractor": info.get("extractor"),
+        },
+    }
+
+    if debug:
+        from pprint import pprint
+        print("DEBUG raw info keys:", list(info.keys()))
+        if "entries" in info:
+            print(f"DEBUG entries: {len(info['entries'])}")
+        if "carousel_media" in info:
+            print(f"DEBUG carousel_media: {len(info['carousel_media'])} items")
+        pprint(result)
+
+    # Add warning if no media found
+    if not image_urls and not video_urls:
+        result["warning"] = (
+            "No image or video URLs found. Possible causes: "
+            "1. Post is private (ensure cookies.txt is from an account following the poster). "
+            "2. Instagram's structure changed (check debug output for new keys). "
+            "3. Rate limits or CAPTCHAs (try a different user agent or proxy)."
+        )
+
+    return result

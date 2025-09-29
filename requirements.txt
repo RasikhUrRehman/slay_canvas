@@ -59,6 +59,7 @@ python-docx>=0.8.11
 
 # Video Processing
 pytubefix>=6.0.0
+yt-dlp>=2023.11.14
 
 # Vector Database
 pymilvus>=2.3.0
