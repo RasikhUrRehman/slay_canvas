@@ -255,7 +255,7 @@ class Extractor:
         logger.info(f"Starting extraction from: {url}")
         
         # Determine content type and use appropriate extractor
-        if "instagram.com" in url:
+        if "instagram.com" in url or "facebook.com" in url or "tiktok.com" in url:
             return self._extract_instagram(url)
         elif "youtube.com" in url or "youtu.be" in url:
             return self._extract_youtube(url)
@@ -445,32 +445,9 @@ class Extractor:
             if not media_urls:
                 raise ValueError(f"Failed to extractadsfasdfasdfasdf Instagram media URLs {media_urls}, with url {url}")
             
-            # Extract shortcode for additional metadata
-            shortcode_match = re.search(r'/(p|reel|tv)/([A-Za-z0-9_-]+)', url)
-            if not shortcode_match:
-                raise ValueError("Invalid Instagram URL")
-            
-            shortcode = shortcode_match.group(1)
-            print("Shortcode", shortcode)
-            print("Fetching post metadata")
-            # Use instaloader for metadata
-            # L = instaloader.Instaloader()
-            # L.login("spodermaanle", "*090078601#")
-            # L.save_session_to_file("session-file")
-
-            # L.load_session_from_file("spodermaanle", filename="session-file")
-
-
-            # post = instaloader.Post.from_shortcode(L.context, shortcode)
-            # print("="*20)
-            # print("POst ,", post)
-            # Process images with image processor
-            post = None # TODO: fix the image metadata
-            
-
             image_transcriptions = []
-            if media_urls and media_urls.get("images"):
-                for image_url in media_urls.get("images", []):
+            if media_urls and media_urls.get("image_urls"):
+                for image_url in media_urls.get("image_urls", []):
                     try:
                         image_text = self.image_processor.process(image_url)
                         print("Image text")
@@ -485,8 +462,8 @@ class Extractor:
             
             # For videos, we would need to extract audio and transcribe
             audio_transcriptions = []
-            if media_urls and media_urls.get("videos"):
-                for video_url in media_urls.get("videos", []):
+            if media_urls and media_urls.get("video_urls"):
+                for video_url in media_urls.get("video_urls", []):
                     try:
                         # Note: Audio extraction from Instagram videos would require additional processing
                         # This is a placeholder for future implementation
@@ -498,8 +475,9 @@ class Extractor:
             
             # Combine all transcriptions
             all_text = []
-            # if post.caption:
-            #     all_text.append(post.caption)
+            post_text = media_urls.get("text")
+            if post_text:
+                all_text.append(f" Post Description: {post_text}")
             for img_trans in image_transcriptions:
                 all_text.append(f"Image Text: {img_trans['text']}")
             for audio_text in audio_transcriptions:
@@ -507,13 +485,14 @@ class Extractor:
             
             return ExtractedContent(
                 url=url,
-                title= "insta post", # f"Instagram post by @{post.owner_username}",
+                title= "Social post", # f"Instagram post by @{post.owner_username}",
                 content= "", # post.caption or "",
-                images=media_urls.get("images", []) if media_urls else [],
-                videos=media_urls.get("videos", []) if media_urls else [],
+                images=media_urls.get("image_urls", []) if media_urls else [],
+                videos=media_urls.get("video_urls", []) if media_urls else [],
                 metadata={
-                    "username": "",#post.owner_username,
-                    "likes": "",#post.likes,
+                    "uploader": media_urls.get("uploader", ""),
+                    "title": media_urls.get("title", ""),
+                    "extractor": media_urls.get("extractor",""),
                     "comments": "",#post.comments,
                     "date": "", #str(post.date),
                     "hashtags": "",#post.caption_hashtags,
@@ -1151,7 +1130,9 @@ def main():
         #"https://www.instagram.com/reel/DOvPrnYjZPZ/?utm_source=ig_web_copy_link&igsh=MXdodmVjMG56MXVybA==", #video
         #"https://www.instagram.com/reel/DHECrYAzKoa/?utm_source=ig_web_copy_link&igsh=dTFzMzdyb3R0YTVv",
         #"https://www.instagram.com/reel/DOY2a8BkoYx/?utm_source=ig_web_copy_link&igsh=cG1zZ3JsMzc5bzA5",
-        "https://www.instagram.com/reel/DMDPPJSuZR4/?utm_source=ig_web_copy_link",
+        #"https://www.instagram.com/reel/DMDPPJSuZR4/?utm_source=ig_web_copy_link",
+        "https://www.tiktok.com/@mbedite/video/7534034640798108959?is_from_webapp=1&sender_device=pc"
+        #"https://www.facebook.com/share/v/19tECkUWis/"
         #"uploads/video_WordPress Blog & n8n Automation for Beginners Step-by-Step Guide.mp4",
         #"uploads/audio_Ed Sheeran - Perfect (Lyrics).m4a",
         #"https://www.youtube.com/watch?v=ba7mB8oueCY&list=RDba7mB8oueCY&start_radio=1"
