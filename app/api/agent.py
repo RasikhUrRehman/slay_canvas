@@ -32,7 +32,8 @@ from app.schemas.knowledge_base import (
 from app.services.conversation_service import conversation_service, message_service
 from app.services.knowledge_base_service import knowledge_base_service
 from app.utils.auth import get_current_user_id
-from engine.llm.agent import KnowledgeBaseAgent
+from engine.llm.agent_openrouter import OpenRouterKnowledgeBaseAgent
+from engine.llm.agent_openai import KnowledgeBaseAgent
 from engine.rag.rag_system import RAGSystem
 from engine.rag.vector_store import VectorStore
 
@@ -129,6 +130,7 @@ class SelectiveSearchRequest(BaseModel):
     knowledge_base_name: str
     document_titles: List[str]
     conversation_id: Optional[int] = None
+    model: Optional[str] = None
 
 
 class GenerateIdeaRequest(BaseModel):
@@ -1060,7 +1062,7 @@ async def query_agent(
         
         # Create agent for the knowledge base on demand
         collection_name = vector_store.collection_name
-        agent = KnowledgeBaseAgent(rag_collection_name=collection_name)
+        agent = OpenRouterKnowledgeBaseAgent(rag_collection_name=collection_name)
         
         # Create streaming response generator
         async def generate_response():
@@ -1216,7 +1218,7 @@ async def chat_agent(
         
         # Initialize the agent
         collection_name = vector_store.collection_name
-        agent = KnowledgeBaseAgent(rag_collection_name=collection_name)
+        agent = OpenRouterKnowledgeBaseAgent(rag_collection_name=collection_name)
         
         async def generate_response():
             """Generate streaming response with only the agent's answer"""
@@ -1622,7 +1624,23 @@ async def selective_search_agent(
         
         # Create agent for the knowledge base
         collection_name = vector_store.collection_name
-        agent = KnowledgeBaseAgent(rag_collection_name=collection_name)
+        
+        # Check if model name contains 'openai' to use OpenAI agent
+        if request.model and 'gpt' in request.model.lower():
+            # Use OpenAI agent with the specified model
+            agent = KnowledgeBaseAgent(
+                vector_store=vector_store,
+                model=request.model
+            )
+        elif request.model:
+            # Use OpenRouter agent with the specified model
+            agent = OpenRouterKnowledgeBaseAgent(
+                rag_collection_name=collection_name,
+                model=request.model
+            )
+        else:
+            # Default to OpenRouter agent
+            agent = OpenRouterKnowledgeBaseAgent(rag_collection_name=collection_name)
         
         # Perform filtered similarity search
         if not matching_source_urls:
@@ -1667,24 +1685,24 @@ Please provide a comprehensive answer based only on the information provided in 
             "content": prompt
         })
         
-        # Create streaming response generator using OpenAI streaming
+        # Create streaming response generator
         async def generate_response():
             try:
                 full_response = ""
                 
-                # Use OpenAI streaming directly
-                stream = agent.llm_client.chat.completions.create(
-                    model=agent.model,
-                    messages=messages,
-                    max_tokens=agent.max_tokens,
-                    temperature=agent.temperature,
-                    stream=True
-                )
-                
-                # Stream response tokens individually with small delay for proper streaming
-                for chunk in stream:
-                    if chunk.choices[0].delta.content is not None:
-                        token = chunk.choices[0].delta.content
+                # Check if we're using OpenAI agent or OpenRouter agent
+                if isinstance(agent, KnowledgeBaseAgent):
+                    # Use OpenAI streaming
+                    async for token in agent.process_query_stream(prompt, conversation_history):
+                        full_response += token
+                        yield token
+                        await asyncio.sleep(0.01)  # Small delay to ensure streaming works
+                else:
+                    # Use OpenRouter streaming directly
+                    for token in agent.llm_client.chat_stream(
+                        messages=messages,
+                        max_tokens=agent.max_tokens
+                    ):
                         full_response += token
                         # Send each token as plain text with small delay
                         yield token
@@ -1844,7 +1862,7 @@ Generate your response now:"""
         )
         
         # Initialize the agent for idea generation
-        agent = KnowledgeBaseAgent(vector_store)
+        agent = OpenRouterKnowledgeBaseAgent(vector_store)
         
         async def generate_response():
             """Generate streaming response with the generated idea"""
