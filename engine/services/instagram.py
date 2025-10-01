@@ -63,8 +63,13 @@
 
 import random
 from typing import Any, Dict, List, Optional
-
 from yt_dlp import YoutubeDL
+from apify_client import ApifyClient
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
 
 
 def _pick_best_video_url(formats: List[Dict[str, Any]]) -> Optional[str]:
@@ -81,15 +86,12 @@ def _pick_best_video_url(formats: List[Dict[str, Any]]) -> Optional[str]:
         f.get("filesize") or 0
     ), reverse=True)
     return candidates[0].get("url")
-
-
 def _pick_image_url(info: Dict[str, Any]) -> Optional[str]:
     # Check common top-level keys
     for k in ("display_url", "url", "thumbnail", "thumbnail_url", "media_url", "image_url"):
         u = info.get(k)
         if u and isinstance(u, str) and u.startswith("http"):
             return u
-
     # Check carousel_media for /p/ posts with multiple images
     carousel = info.get("carousel_media") or []
     if carousel:
@@ -98,7 +100,6 @@ def _pick_image_url(info: Dict[str, Any]) -> Optional[str]:
                 u = item.get(k)
                 if u and isinstance(u, str) and u.startswith("http"):
                     return u
-
     # Check thumbnails list
     thumbs = info.get("thumbnails") or []
     if thumbs:
@@ -108,7 +109,6 @@ def _pick_image_url(info: Dict[str, Any]) -> Optional[str]:
         for t in thumbs_sorted:
             if t.get("url"):
                 return t["url"]
-
     # Check nested media or entries
     for key in ("media", "entries"):
         if key in info:
@@ -119,16 +119,12 @@ def _pick_image_url(info: Dict[str, Any]) -> Optional[str]:
                         u = item.get(k)
                         if u and isinstance(u, str) and u.startswith("http"):
                             return u
-
     # Last resort: check formats for image-like URLs
     if info.get("formats"):
         for f in info["formats"]:
             if f.get("url") and str(f.get("url")).endswith((".jpg", ".jpeg", ".png", ".webp")):
                 return f["url"]
-
     return None
-
-
 def extract_media_from_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
     if entry.get("formats"):  # likely video
         return {
@@ -140,9 +136,7 @@ def extract_media_from_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
     if img:
         return {"type": "image", "url": img, "thumbnail": entry.get("thumbnail") or img}
     return {"type": "unknown", "url": None, "thumbnail": entry.get("thumbnail")}
-
-
-def get_instagram_media_urls(post_url: str, debug: bool = False) -> Optional[Dict[str, Any]]:
+def get_tiktok_facebook_media_urls(post_url: str, debug: bool = False) -> Optional[Dict[str, Any]]:
     # Rotate user agents to avoid rate limits
     user_agents = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
@@ -156,7 +150,6 @@ def get_instagram_media_urls(post_url: str, debug: bool = False) -> Optional[Dic
         "user_agent": random.choice(user_agents),
         "cookiefile": "cookies.txt",  # Path to cookies file (see instructions below)
     }
-
     """
     To generate cookies.txt:
     1. Log in to Instagram in your browser.
@@ -164,7 +157,6 @@ def get_instagram_media_urls(post_url: str, debug: bool = False) -> Optional[Dic
     3. Export cookies to a cookies.txt file.
     4. Place cookies.txt in the same directory as this script or update the path above.
     """
-
     with YoutubeDL(ydl_opts) as ydl:
         try:
             info = ydl.extract_info(post_url, download=False)
@@ -172,14 +164,12 @@ def get_instagram_media_urls(post_url: str, debug: bool = False) -> Optional[Dic
             if debug:
                 print("Extraction error:", str(e))
             return {"error": f"Failed to extract info: {str(e)}"}
-
     # Collect entries
     entries = []
     if info.get("_type") in ("playlist", "multi_video") or info.get("entries"):
         entries = info.get("entries") or []
     else:
         entries = [info]
-
     image_urls, video_urls, thumbnails = [], [], []
     for entry in entries:
         if not entry:
@@ -191,20 +181,17 @@ def get_instagram_media_urls(post_url: str, debug: bool = False) -> Optional[Dic
             image_urls.append(media["url"])
         if media.get("thumbnail"):
             thumbnails.append(media["thumbnail"])
-
     # Check carousel_media for /p/ posts
     if not image_urls and info.get("carousel_media"):
         for item in info["carousel_media"]:
             img_url = _pick_image_url(item)
             if img_url and img_url not in image_urls:  # Avoid duplicates
                 image_urls.append(img_url)
-
     # Fallback: check top-level thumbnails
     if not image_urls and info.get("thumbnails"):
         for t in info["thumbnails"]:
             if t.get("url") and t["url"] not in image_urls:  # Avoid duplicates
                 image_urls.append(t["url"])
-
     result = {
         "image_urls": image_urls,
         "video_urls": video_urls,
@@ -219,7 +206,6 @@ def get_instagram_media_urls(post_url: str, debug: bool = False) -> Optional[Dic
             "extractor": info.get("extractor"),
         },
     }
-
     if debug:
         from pprint import pprint
         print("DEBUG raw info keys:", list(info.keys()))
@@ -228,7 +214,6 @@ def get_instagram_media_urls(post_url: str, debug: bool = False) -> Optional[Dic
         if "carousel_media" in info:
             print(f"DEBUG carousel_media: {len(info['carousel_media'])} items")
         pprint(result)
-
     # Add warning if no media found
     if not image_urls and not video_urls:
         result["warning"] = (
@@ -237,5 +222,65 @@ def get_instagram_media_urls(post_url: str, debug: bool = False) -> Optional[Dic
             "2. Instagram's structure changed (check debug output for new keys). "
             "3. Rate limits or CAPTCHAs (try a different user agent or proxy)."
         )
-
     return result
+
+
+def get_instagram_media_urls(post_url: str):
+    """
+    Scrapes an Instagram post (single, reel, or carousel) using Apify
+    and returns images, videos, caption, and metadata.
+    """
+    client = ApifyClient(os.getenv("APIFY_API_KEY"))
+
+    # Run the scraper with the given post URL
+    run = client.actor("apify/instagram-scraper").call(run_input={
+        "directUrls": [post_url],
+        "resultsLimit": 1
+    })
+
+    # Initialize return values
+    video_urls, image_urls, caption, metadata = [], [], "", {}
+
+    # Process dataset items
+    for item in client.dataset(run["defaultDatasetId"]).iterate_items():
+        caption = item.get("caption", "")
+
+        # Extract images
+        if "images" in item and item["images"]:
+            image_urls.extend(item["images"])
+
+        if "childPosts" in item and item["childPosts"]:
+            for child in item["childPosts"]:
+                if child.get("displayUrl"):
+                    image_urls.append(child["displayUrl"])
+                if child.get("videoUrl"):
+                    video_urls.append(child["videoUrl"])
+                if "images" in child and child["images"]:
+                    image_urls.extend(child["images"])
+
+        if item.get("displayUrl"):
+            image_urls.append(item["displayUrl"])
+        if item.get("videoUrl"):
+            video_urls.append(item["videoUrl"])
+
+        # Build metadata dictionary
+        metadata = {
+            "uploader": item.get("ownerUsername", ""),
+            "title": item.get("alt", ""),  # sometimes alt text contains description
+            "extractor": "apify/instagram-scraper",
+            "comments": item.get("commentsCount", ""),
+            "date": item.get("timestamp", ""),
+            "hashtags": item.get("hashtags", []),
+            "mentions": item.get("mentions", [])
+        }
+
+    # Deduplicate URLs
+    video_urls = list(set(video_urls))
+    image_urls = list(set(image_urls))
+
+    return {
+        "video_urls": video_urls,
+        "image_urls": image_urls,
+        "caption": caption,
+        "metadata": metadata
+    }

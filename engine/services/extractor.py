@@ -33,7 +33,7 @@ from engine.processors.image_processor import ImageProcessor
 from engine.processors.document_processor import DocumentProcessor
 from app.core.config import settings
 from engine.services.youtube import YouTubeProcessor
-from engine.services.instagram import get_instagram_media_urls
+from engine.services.instagram import get_instagram_media_urls, get_tiktok_facebook_media_urls
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -255,8 +255,12 @@ class Extractor:
         logger.info(f"Starting extraction from: {url}")
         
         # Determine content type and use appropriate extractor
-        if "instagram.com" in url or "facebook.com" in url or "tiktok.com" in url:
+        if "instagram.com" in url:
             return self._extract_instagram(url)
+
+        elif "facebook.com" in url or "tiktok.com" in url:
+            return self._extract_tiktok_facebook(url)
+        
         elif "youtube.com" in url or "youtu.be" in url:
             return self._extract_youtube(url)
         elif "twitter.com" in url or "x.com" in url:
@@ -267,7 +271,89 @@ class Extractor:
             return self._extract_video_direct(url)
         else:
             return self._extract_webpage(url)
-    
+        
+    def _extract_tiktok_facebook(self, url: str) -> ExtractedContent:
+        """Extract content from TikTok or Facebook posts using TikTok/Facebook processor"""
+        try:
+            print("using tiktok/facebook")
+            # Use the TikTok/Facebook processor to get media URLs
+            media_urls = get_tiktok_facebook_media_urls(url)
+            print(media_urls)
+            print("+"*20)
+            if not media_urls:
+                raise ValueError(f"Failed to extractadsfasdfasdfasdf Instagram media URLs {media_urls}, with url {url}")
+            
+            image_transcriptions = []
+            if media_urls and media_urls.get("image_urls"):
+                for image_url in media_urls.get("image_urls", []):
+                    try:
+                        image_text = self.image_processor.process(image_url)
+                        print("Image text")
+                        print(image_text)
+                        if image_text:
+                            image_transcriptions.append({
+                                "url": image_url,
+                                "text": image_text
+                            })
+                    except Exception as e:
+                        logger.warning(f"Failed to process Instagram image {image_url}: {e}")
+            
+            # For videos, we would need to extract audio and transcribe
+            audio_transcriptions = []
+            if media_urls and media_urls.get("video_urls"):
+                for video_url in media_urls.get("video_urls", []):
+                    try:
+                        # Note: Audio extraction from Instagram videos would require additional processing
+                        # This is a placeholder for future implementation
+                        audio_text = self.audio_processor.transcribe_from_url(video_url)
+                        if audio_text:
+                            audio_transcriptions.append(audio_text)
+                    except Exception as e:
+                        logger.warning(f"Failed to process Instagram video audio {video_url}: {e}")
+            
+            # Combine all transcriptions
+            all_text = []
+            post_text = media_urls.get("text")
+            if post_text:
+                all_text.append(f" Post Description: {post_text}")
+            for img_trans in image_transcriptions:
+                all_text.append(f"Image Text: {img_trans['text']}")
+            for audio_text in audio_transcriptions:
+                all_text.append(f"Audio Transcription: {audio_text}")
+            
+            return ExtractedContent(
+                url=url,
+                title= "Social post", # f"Instagram post by @{post.owner_username}",
+                content= "", # post.caption or "",
+                images=media_urls.get("image_urls", []) if media_urls else [],
+                videos=media_urls.get("video_urls", []) if media_urls else [],
+                metadata={
+                    "uploader": media_urls.get("uploader", ""),
+                    "title": media_urls.get("title", ""),
+                    "extractor": media_urls.get("extractor",""),
+                    "comments": "",#post.comments,
+                    "date": "", #str(post.date),
+                    "hashtags": "",#post.caption_hashtags,
+                    "mentions": ""#post.caption_mentions
+                },
+                transcriptions={
+                    "text": "\n".join(all_text),
+                    "audio_transcription": "\n".join(audio_transcriptions),
+                    "image_transcriptions": image_transcriptions
+                },
+                content_type="instagram",
+                success=True
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to extract Instagram content: {e}")
+            return ExtractedContent(
+                url=url,
+                content_type="instagram",
+                success=False,
+                error_message=str(e)
+            )
+
     def _extract_webpage(self, url: str) -> ExtractedContent:
         """Extract content from regular webpages with comprehensive processing"""
         try:
@@ -475,13 +561,15 @@ class Extractor:
             
             # Combine all transcriptions
             all_text = []
-            post_text = media_urls.get("text")
+            post_text = media_urls.get("caption")
             if post_text:
                 all_text.append(f" Post Description: {post_text}")
             for img_trans in image_transcriptions:
                 all_text.append(f"Image Text: {img_trans['text']}")
             for audio_text in audio_transcriptions:
                 all_text.append(f"Audio Transcription: {audio_text}")
+            
+            metadata = media_urls.get("metadata", {})
             
             return ExtractedContent(
                 url=url,
@@ -490,13 +578,13 @@ class Extractor:
                 images=media_urls.get("image_urls", []) if media_urls else [],
                 videos=media_urls.get("video_urls", []) if media_urls else [],
                 metadata={
-                    "uploader": media_urls.get("uploader", ""),
-                    "title": media_urls.get("title", ""),
-                    "extractor": media_urls.get("extractor",""),
-                    "comments": "",#post.comments,
-                    "date": "", #str(post.date),
-                    "hashtags": "",#post.caption_hashtags,
-                    "mentions": ""#post.caption_mentions
+                    "uploader": metadata.get("uploader", ""),
+                    "title": metadata.get("title", ""),
+                    "extractor": metadata.get("extractor",""),
+                    "comments": metadata.get("comments", ""),#post.comments,
+                    "date": metadata.get("date", ""), #str(post.date),
+                    "hashtags": metadata.get("hashtags", ""),#post.caption_hashtags,
+                    "mentions": metadata.get("mentions", "")#post.caption_mentions
                 },
                 transcriptions={
                     "text": "\n".join(all_text),
@@ -1131,7 +1219,8 @@ def main():
         #"https://www.instagram.com/reel/DHECrYAzKoa/?utm_source=ig_web_copy_link&igsh=dTFzMzdyb3R0YTVv",
         #"https://www.instagram.com/reel/DOY2a8BkoYx/?utm_source=ig_web_copy_link&igsh=cG1zZ3JsMzc5bzA5",
         #"https://www.instagram.com/reel/DMDPPJSuZR4/?utm_source=ig_web_copy_link",
-        "https://www.tiktok.com/@mbedite/video/7534034640798108959?is_from_webapp=1&sender_device=pc"
+        #"https://www.tiktok.com/@mbedite/video/7534034640798108959?is_from_webapp=1&sender_device=pc"
+        "https://www.instagram.com/reel/DOf52aUjCXh/?utm_source=ig_web_copy_link&igsh=MXg3M3A4aHAxYnVqNQ=="
         #"https://www.facebook.com/share/v/19tECkUWis/"
         #"uploads/video_WordPress Blog & n8n Automation for Beginners Step-by-Step Guide.mp4",
         #"uploads/audio_Ed Sheeran - Perfect (Lyrics).m4a",
