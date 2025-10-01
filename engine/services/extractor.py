@@ -578,13 +578,13 @@ class Extractor:
                 images=media_urls.get("image_urls", []) if media_urls else [],
                 videos=media_urls.get("video_urls", []) if media_urls else [],
                 metadata={
-                    "uploader": metadata.get("uploader", ""),
-                    "title": metadata.get("title", ""),
-                    "extractor": metadata.get("extractor",""),
-                    "comments": metadata.get("comments", ""),#post.comments,
-                    "date": metadata.get("date", ""), #str(post.date),
-                    "hashtags": metadata.get("hashtags", ""),#post.caption_hashtags,
-                    "mentions": metadata.get("mentions", "")#post.caption_mentions
+                    "uploader": str(metadata.get("uploader") or ""),
+                    "title": str(metadata.get("title") or "Social post"),
+                    "extractor": str(metadata.get("extractor") or ""),
+                    "comments": str(metadata.get("comments") or ""),#post.comments,
+                    "date": str(metadata.get("date") or ""), #str(post.date),
+                    "hashtags": str(metadata.get("hashtags") or ""),#post.caption_hashtags,
+                    "mentions": str(metadata.get("mentions") or "")#post.caption_mentions
                 },
                 transcriptions={
                     "text": "\n".join(all_text),

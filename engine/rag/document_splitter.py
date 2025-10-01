@@ -89,10 +89,10 @@ class DocumentSplitter:
         
         chunks = []
         base_metadata = {
-            "source_url": extracted_content.get("url", ""),
-            "content_type": extracted_content.get("content_type", ""),
-            "title": extracted_content.get("metadata", {}).get("title", ""),
-            "extraction_time": extracted_content.get("metadata", {}).get("extraction_time", ""),
+            "source_url": str(extracted_content.get("url") or ""),
+            "content_type": str(extracted_content.get("content_type") or ""),
+            "title": str(extracted_content.get("metadata", {}).get("title") or ""),
+            "extraction_time": str(extracted_content.get("metadata", {}).get("extraction_time") or ""),
         }
         
         transcriptions = extracted_content.get("transcriptions", {})
