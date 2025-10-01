@@ -61,9 +61,10 @@
 
 
 
-from yt_dlp import YoutubeDL
-from typing import Optional, Dict, Any, List
 import random
+from typing import Any, Dict, List, Optional
+
+from yt_dlp import YoutubeDL
 
 
 def _pick_best_video_url(formats: List[Dict[str, Any]]) -> Optional[str]:
@@ -152,8 +153,8 @@ def get_instagram_media_urls(post_url: str, debug: bool = False) -> Optional[Dic
         "quiet": False,  # Set to False to see detailed yt_dlp errors
         "skip_download": True,
         "noplaylist": True,
-        "user_agent": random.choice(user_agents)
-        #"cookiefile": "cookies.txt",  # Path to cookies file (see instructions below)
+        "user_agent": random.choice(user_agents),
+        "cookiefile": "cookies.txt",  # Path to cookies file (see instructions below)
     }
 
     """
