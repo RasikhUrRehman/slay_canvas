@@ -174,17 +174,17 @@ class VectorStore:
                 "id": doc_id,
                 "text": text,
                 "vector": embedding,
-                "source_url": metadata.get("source_url", ""),
-                "content_type": metadata.get("content_type", ""),
-                "title": metadata.get("title", ""),
+                "source_url": str(metadata.get("source_url", "")),
+                "content_type": str(metadata.get("content_type", "")),
+                "title": str(metadata.get("title") or ""),  # Ensure title is never None
                 "chunk_index": metadata.get("chunk_index", 0),
                 "total_chunks": metadata.get("total_chunks", 1),
                 "chunk_size": metadata.get("chunk_size", len(text)),
-                "extraction_time": metadata.get("extraction_time", ""),
-                "transcription_type": metadata.get("transcription_type", "text"),
-                "original_filename": metadata.get("original_filename", ""),
+                "extraction_time": str(metadata.get("extraction_time", "")),
+                "transcription_type": str(metadata.get("transcription_type", "text")),
+                "original_filename": str(metadata.get("original_filename", "")),
                 "user_id": metadata.get("user_id", 0),
-                "project_name": metadata.get("project_name", "")
+                "project_name": str(metadata.get("project_name", ""))
             }
             entities.append(entity)
 
