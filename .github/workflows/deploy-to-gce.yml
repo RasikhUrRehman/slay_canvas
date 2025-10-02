@@ -27,12 +27,12 @@ jobs:
 
       - name: Debug SSH connection
         run: |
-          ssh -v -o StrictHostKeyChecking=no slay-ci-cd@${{ secrets.GCE_VM_IP }} whoami
+          ssh -v -o StrictHostKeyChecking=no slay-ci-cd-new@${{ secrets.GCE_VM_IP }} whoami
         continue-on-error: true
 
       - name: Deploy to GCE (docker compose)
         run: |
-          ssh -o StrictHostKeyChecking=no slay-ci-cd@${{ secrets.GCE_VM_IP }} << 'EOF'
+          ssh -o StrictHostKeyChecking=no slay-ci-cd-new@${{ secrets.GCE_VM_IP }} << 'EOF'
           set -x
           cd /home/kjmannn17/slay_canvas
 
