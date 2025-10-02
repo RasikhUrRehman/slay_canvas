@@ -1,3 +1,4 @@
+import asyncio
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -5,6 +6,8 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.models.asset import Asset
+from app.models.knowledge_base import KnowledgeBase
 from app.schemas.asset import AssetCreate, AssetCreateWithFile, AssetRead, AssetUpdate
 from app.schemas.collection import (
     CollectionCreate,
@@ -427,12 +430,73 @@ async def link_asset_to_knowledge_base(
     current_user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """Link an asset to a knowledge base and create chunks in Milvus."""
+    """Link an asset to a knowledge base and create chunks in Milvus in background thread."""
+    
     try:
-        result = await asset_knowledge_service.link_asset_to_knowledge_base(
-            db, asset_id, knowledge_base_id, current_user_id, asset_handle, kb_handle
-        )
-        return result
+        # First, verify ownership and link immediately (fast operation)
+        asset = await db.get(Asset, asset_id)
+        if not asset or asset.user_id != current_user_id:
+            raise ValueError("Asset not found or access denied")
+        
+        kb = await db.get(KnowledgeBase, knowledge_base_id)
+        if not kb or kb.user_id != current_user_id:
+            raise ValueError("Knowledge base not found or access denied")
+        
+        # Verify asset and KB are in same workspace
+        if asset.workspace_id != kb.workspace_id:
+            raise ValueError("Asset and knowledge base must be in the same workspace")
+        
+        # Link immediately (fast operation)
+        asset.knowledge_base_id = knowledge_base_id
+        if asset_handle is not None:
+            asset.kb_connection_asset_handle = asset_handle
+        if kb_handle is not None:
+            asset.kb_connection_kb_handle = kb_handle
+        
+        await db.commit()
+        await db.refresh(asset)
+        
+        # Define the heavy chunking work to run in thread
+        def chunking_work():
+            import asyncio
+
+            from app.db.session import async_session_factory
+            
+            async def process_chunks():
+                async with async_session_factory() as thread_db:
+                    try:
+                        # Get fresh instances in the thread
+                        asset_fresh = await thread_db.get(Asset, asset_id)
+                        kb_fresh = await thread_db.get(KnowledgeBase, knowledge_base_id)
+                        
+                        if asset_fresh and kb_fresh:
+                            # Only do the chunking part
+                            chunk_result = await asset_knowledge_service._process_asset_for_chunking(asset_fresh, kb_fresh, thread_db)
+                            print(f"Background chunking completed for asset {asset_id}: {chunk_result.get('chunks_created', 0)} chunks created")
+                        else:
+                            print(f"Asset {asset_id} or KB {knowledge_base_id} not found during background chunking")
+                    except Exception as e:
+                        print(f"Error in background chunking: {e}")
+            
+            # Run async function in new event loop
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(process_chunks())
+            finally:
+                loop.close()
+        
+        # Start chunking in background thread
+        asyncio.create_task(asyncio.to_thread(chunking_work))
+        
+        return {
+            "message": f"Asset '{asset.title or asset.id}' linked to knowledge base '{kb.name}'. Processing chunks in background.",
+            "asset_id": asset.id,
+            "knowledge_base_id": knowledge_base_id,
+            "status": "linked",
+            "processing_status": "background_processing"
+        }
+        
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -450,12 +514,98 @@ async def link_collection_to_knowledge_base(
     current_user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """Link a collection to a knowledge base and create chunks for all assets."""
+    """Link a collection to a knowledge base and create chunks for all assets in background thread."""
+    
     try:
-        result = await asset_knowledge_service.link_collection_to_knowledge_base(
-            db, collection_id, knowledge_base_id, current_user_id, collection_handle, kb_handle
-        )
-        return result
+        # First, verify ownership and link immediately (fast operation)
+        from sqlalchemy.future import select
+        from sqlalchemy.orm import selectinload
+
+        from app.models.collection import Collection
+        
+        query = select(Collection).options(selectinload(Collection.assets)).where(Collection.id == collection_id)
+        result = await db.execute(query)
+        collection = result.scalar_one_or_none()
+        
+        if not collection or collection.user_id != current_user_id:
+            raise ValueError("Collection not found or access denied")
+        
+        kb = await db.get(KnowledgeBase, knowledge_base_id)
+        if not kb or kb.user_id != current_user_id:
+            raise ValueError("Knowledge base not found or access denied")
+        
+        # Verify collection and KB are in same workspace
+        if collection.workspace_id != kb.workspace_id:
+            raise ValueError("Collection and knowledge base must be in the same workspace")
+        
+        # Link immediately (fast operation)
+        collection.knowledge_base_id = knowledge_base_id
+        if collection_handle is not None:
+            collection.kb_connection_asset_handle = collection_handle
+        if kb_handle is not None:
+            collection.kb_connection_kb_handle = kb_handle
+        
+        await db.commit()
+        await db.refresh(collection)
+        
+        asset_count = len(collection.assets)
+        
+        # Define the heavy chunking work to run in thread
+        def chunking_work():
+            import asyncio
+
+            from app.db.session import async_session_factory
+            
+            async def process_chunks():
+                async with async_session_factory() as thread_db:
+                    try:
+                        # Get fresh instances in the thread
+                        query = select(Collection).options(selectinload(Collection.assets)).where(Collection.id == collection_id)
+                        result = await thread_db.execute(query)
+                        collection_fresh = result.scalar_one_or_none()
+                        
+                        kb_fresh = await thread_db.get(KnowledgeBase, knowledge_base_id)
+                        
+                        if collection_fresh and kb_fresh:
+                            # Process all assets in the collection
+                            total_chunks = 0
+                            processed_assets = 0
+                            
+                            for asset in collection_fresh.assets:
+                                try:
+                                    chunk_result = await asset_knowledge_service._process_asset_for_chunking(asset, kb_fresh, thread_db)
+                                    total_chunks += chunk_result.get("chunks_created", 0)
+                                    processed_assets += 1
+                                    print(f"Processed asset {asset.id}: {chunk_result.get('chunks_created', 0)} chunks")
+                                except Exception as e:
+                                    print(f"Error processing asset {asset.id}: {e}")
+                            
+                            print(f"Background chunking completed for collection {collection_id}: {processed_assets} assets, {total_chunks} chunks created")
+                        else:
+                            print(f"Collection {collection_id} or KB {knowledge_base_id} not found during background chunking")
+                    except Exception as e:
+                        print(f"Error in background collection chunking: {e}")
+            
+            # Run async function in new event loop
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(process_chunks())
+            finally:
+                loop.close()
+        
+        # Start chunking in background thread
+        asyncio.create_task(asyncio.to_thread(chunking_work))
+        
+        return {
+            "message": f"Collection '{collection.name}' linked to knowledge base '{kb.name}'. Processing {asset_count} assets in background.",
+            "collection_id": collection.id,
+            "knowledge_base_id": knowledge_base_id,
+            "assets_to_process": asset_count,
+            "status": "linked",
+            "processing_status": "background_processing"
+        }
+        
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
