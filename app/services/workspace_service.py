@@ -42,14 +42,14 @@ class WorkspaceService:
     async def list_workspaces(
         self, db: AsyncSession, user_id: int
     ) -> List[WorkspaceModel]:
-        """List all workspaces owned by or shared with a user."""
+        """List all workspaces owned by or shared with a user, ordered by most recent."""
         result = await db.execute(
             select(WorkspaceModel).where(
                 or_(
                     WorkspaceModel.user_id == user_id,
                     WorkspaceModel.users.any(id=user_id),
                 )
-            )
+            ).order_by(WorkspaceModel.updated_at.desc())
         )
         return result.scalars().all()
 
@@ -209,7 +209,7 @@ class WorkspaceService:
     async def list_starred_workspaces(
         self, db: AsyncSession, user_id: int
     ) -> List[WorkspaceModel]:
-        """List all starred workspaces owned by or shared with a user."""
+        """List all starred workspaces owned by or shared with a user, ordered by most recent."""
         result = await db.execute(
             select(WorkspaceModel).where(
                 and_(
@@ -219,14 +219,14 @@ class WorkspaceService:
                         WorkspaceModel.users.any(id=user_id),
                     )
                 )
-            )
+            ).order_by(WorkspaceModel.updated_at.desc())
         )
         return result.scalars().all()
 
     async def list_archived_workspaces(
         self, db: AsyncSession, user_id: int
     ) -> List[WorkspaceModel]:
-        """List all archived workspaces owned by or shared with a user."""
+        """List all archived workspaces owned by or shared with a user, ordered by most recent."""
         result = await db.execute(
             select(WorkspaceModel).where(
                 and_(
@@ -236,14 +236,14 @@ class WorkspaceService:
                         WorkspaceModel.users.any(id=user_id),
                     )
                 )
-            )
+            ).order_by(WorkspaceModel.updated_at.desc())
         )
         return result.scalars().all()
 
     async def list_active_workspaces(
         self, db: AsyncSession, user_id: int
     ) -> List[WorkspaceModel]:
-        """List all active (non-archived) workspaces owned by or shared with a user."""
+        """List all active (non-archived) workspaces owned by or shared with a user, ordered by most recent."""
         result = await db.execute(
             select(WorkspaceModel).where(
                 and_(
@@ -253,7 +253,7 @@ class WorkspaceService:
                         WorkspaceModel.users.any(id=user_id),
                     )
                 )
-            )
+            ).order_by(WorkspaceModel.updated_at.desc())
         )
         return result.scalars().all()
 
