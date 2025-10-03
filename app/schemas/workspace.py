@@ -16,6 +16,8 @@ class WorkspaceBase(BaseModel):
     description: Optional[str] = None
     settings: Dict[str, Any] = {}
     is_public: bool = False
+    is_starred: bool = False
+    is_archived: bool = False
 
 
 # ✅ Schema for creating a workspace
@@ -29,6 +31,8 @@ class WorkspaceUpdate(BaseModel):
     description: Optional[str] = None
     settings: Optional[Dict[str, Any]] = None
     is_public: Optional[bool] = None
+    is_starred: Optional[bool] = None
+    is_archived: Optional[bool] = None
     collaborator_ids: Optional[List[int]] = None
 
 
@@ -59,6 +63,8 @@ class WorkspacePublic(BaseModel):
     name: str
     description: Optional[str]
     is_public: bool
+    is_starred: bool
+    is_archived: bool
     created_at: datetime
 
     class Config:

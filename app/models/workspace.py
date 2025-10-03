@@ -32,6 +32,10 @@ class Workspace(Base):
     # Collaboration and settings
     settings = Column(JSON, default={})
     is_public = Column(Boolean, default=False, nullable=False)
+    
+    # User preferences
+    is_starred = Column(Boolean, default=False, nullable=False)
+    is_archived = Column(Boolean, default=False, nullable=False)
 
     # Owner relationship
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)

@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -129,6 +129,10 @@ class WorkspaceService:
             workspace.settings = request.settings
         if request.is_public is not None:
             workspace.is_public = request.is_public
+        if request.is_starred is not None:
+            workspace.is_starred = request.is_starred
+        if request.is_archived is not None:
+            workspace.is_archived = request.is_archived
         
         # Update collaborators if provided
         if request.collaborator_ids is not None:
@@ -161,6 +165,97 @@ class WorkspaceService:
         await db.delete(workspace)
         await db.commit()
         return True
+
+    async def star_workspace(
+        self, db: AsyncSession, workspace_id: int, user_id: int, is_starred: bool
+    ) -> Optional[WorkspaceModel]:
+        """Star or unstar a workspace. Only the owner can star/unstar."""
+        workspace = await db.execute(
+            select(WorkspaceModel).where(
+                WorkspaceModel.id == workspace_id,
+                WorkspaceModel.user_id == user_id  # Only owner can star/unstar
+            )
+        )
+        workspace = workspace.scalars().first()
+        
+        if not workspace:
+            return None
+        
+        workspace.is_starred = is_starred
+        await db.commit()
+        await db.refresh(workspace)
+        return workspace
+
+    async def archive_workspace(
+        self, db: AsyncSession, workspace_id: int, user_id: int, is_archived: bool
+    ) -> Optional[WorkspaceModel]:
+        """Archive or unarchive a workspace. Only the owner can archive/unarchive."""
+        workspace = await db.execute(
+            select(WorkspaceModel).where(
+                WorkspaceModel.id == workspace_id,
+                WorkspaceModel.user_id == user_id  # Only owner can archive/unarchive
+            )
+        )
+        workspace = workspace.scalars().first()
+        
+        if not workspace:
+            return None
+        
+        workspace.is_archived = is_archived
+        await db.commit()
+        await db.refresh(workspace)
+        return workspace
+
+    async def list_starred_workspaces(
+        self, db: AsyncSession, user_id: int
+    ) -> List[WorkspaceModel]:
+        """List all starred workspaces owned by or shared with a user."""
+        result = await db.execute(
+            select(WorkspaceModel).where(
+                and_(
+                    WorkspaceModel.is_starred,
+                    or_(
+                        WorkspaceModel.user_id == user_id,
+                        WorkspaceModel.users.any(id=user_id),
+                    )
+                )
+            )
+        )
+        return result.scalars().all()
+
+    async def list_archived_workspaces(
+        self, db: AsyncSession, user_id: int
+    ) -> List[WorkspaceModel]:
+        """List all archived workspaces owned by or shared with a user."""
+        result = await db.execute(
+            select(WorkspaceModel).where(
+                and_(
+                    WorkspaceModel.is_archived,
+                    or_(
+                        WorkspaceModel.user_id == user_id,
+                        WorkspaceModel.users.any(id=user_id),
+                    )
+                )
+            )
+        )
+        return result.scalars().all()
+
+    async def list_active_workspaces(
+        self, db: AsyncSession, user_id: int
+    ) -> List[WorkspaceModel]:
+        """List all active (non-archived) workspaces owned by or shared with a user."""
+        result = await db.execute(
+            select(WorkspaceModel).where(
+                and_(
+                    ~WorkspaceModel.is_archived,
+                    or_(
+                        WorkspaceModel.user_id == user_id,
+                        WorkspaceModel.users.any(id=user_id),
+                    )
+                )
+            )
+        )
+        return result.scalars().all()
 
 
 # Legacy function for backward compatibility

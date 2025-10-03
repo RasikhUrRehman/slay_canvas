@@ -90,7 +90,7 @@
 
 #     return workspaces
 
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -124,13 +124,33 @@ async def create_workspace(
 
 @router.get("", response_model=List[Workspace])
 async def list_workspaces(
+    starred: Optional[bool] = None,
+    archived: Optional[bool] = None,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all workspaces belonging to or shared with the current user."""
+    """List workspaces with optional filtering by starred/archived status."""
     user_id: int = get_current_user_id(credentials)
     service = WorkspaceService()
-    return await service.list_workspaces(db, user_id)
+    
+    # Handle different filter combinations
+    if starred is True and archived is None:
+        return await service.list_starred_workspaces(db, user_id)
+    elif archived is True and starred is None:
+        return await service.list_archived_workspaces(db, user_id)
+    elif archived is False and starred is None:
+        return await service.list_active_workspaces(db, user_id)
+    else:
+        # Default: return all workspaces (can be filtered further by combining params)
+        workspaces = await service.list_workspaces(db, user_id)
+        
+        # Apply additional filtering if both params are specified
+        if starred is not None:
+            workspaces = [w for w in workspaces if w.is_starred == starred]
+        if archived is not None:
+            workspaces = [w for w in workspaces if w.is_archived == archived]
+            
+        return workspaces
 
 
 @router.get("/{workspace_id}", response_model=dict)
@@ -154,6 +174,8 @@ async def get_workspace_detailed(
         "description": workspace.description,
         "settings": workspace.settings,
         "is_public": workspace.is_public,
+        "is_starred": workspace.is_starred,
+        "is_archived": workspace.is_archived,
         "user_id": workspace.user_id,
         "created_at": workspace.created_at,
         "updated_at": workspace.updated_at,
@@ -256,3 +278,39 @@ async def delete_workspace(
         raise HTTPException(status_code=404, detail="Workspace not found or you don't have permission to delete it")
     
     return MessageResponse(message=f"Workspace {workspace_id} deleted successfully")
+
+
+@router.patch("/{workspace_id}/star", response_model=Workspace)
+async def star_workspace(
+    workspace_id: int,
+    is_starred: bool,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db),
+):
+    """Star or unstar a workspace. Only the owner can star/unstar."""
+    user_id: int = get_current_user_id(credentials)
+    service = WorkspaceService()
+    workspace = await service.star_workspace(db, workspace_id, user_id, is_starred)
+    
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found or you don't have permission to star/unstar it")
+    
+    return workspace
+
+
+@router.patch("/{workspace_id}/archive", response_model=Workspace)
+async def archive_workspace(
+    workspace_id: int,
+    is_archived: bool,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db),
+):
+    """Archive or unarchive a workspace. Only the owner can archive/unarchive."""
+    user_id: int = get_current_user_id(credentials)
+    service = WorkspaceService()
+    workspace = await service.archive_workspace(db, workspace_id, user_id, is_archived)
+    
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found or you don't have permission to archive/unarchive it")
+    
+    return workspace
